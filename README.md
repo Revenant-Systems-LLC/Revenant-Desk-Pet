@@ -1,0 +1,88 @@
+# Revenant Desk Pet
+
+RevBot, a little robot that lives on the Windows taskbar. It walks around,
+fidgets, watches the mouse cursor, naps when you step away, and hides itself
+whenever a fullscreen app or game is in front of it.
+
+Where it's going (an LLM inside, a detachable arm, mech mode, climbing on your
+windows, and more) is in [ROADMAP.md](ROADMAP.md).
+
+Built on WinForms with a per-pixel-alpha layered window (`UpdateLayeredWindow`).
+It uses no GPU and no Direct3D. The only GPU cost is DWM compositing one small
+window, the same cost as any other small window.
+
+## Run
+
+```
+dist\DesktopPet.exe              normal
+dist\DesktopPet.exe --demo       cycles every animation, state and look direction
+dist\DesktopPet.exe --selftest   loads the art, builds every scale, resolves every
+                                 animation, logs the result and exits (works while
+                                 the pet is already running)
+```
+
+It needs the .NET 10 Desktop Runtime. Only one copy runs at a time.
+
+Only the idle animation is required; every other animation is optional and
+falls back to the closest one the pet has (see `Atlas.Clip`).
+
+## Controls
+
+| Input | What happens |
+|---|---|
+| Left click | a random reaction (jump, wave, shrug, sometimes a mech move) |
+| Left drag | pick it up; let go to drop it (big drops end in a fall-apart) |
+| Right click, or the tray icon | menu: actions, held states, size, stay put, come here, exit |
+| Tray icon double-click | "come here": drops it onto the middle of the main monitor |
+
+With nothing to do it walks, fidgets, and follows the cursor with its head
+when the cursor gets close. After 5 minutes with no keyboard or mouse input it
+falls asleep, and it wakes up when you come back.
+
+## Files it writes
+
+Both go next to the exe, never anywhere else:
+
+- `settings.json`: size, stay-put, last position
+- `logs\pet.log`: state changes and errors, capped at two 1 MB files
+
+## The AI hookup (later)
+
+`Pet.SetState(name)` in `src/DesktopPet/Pet.cs` is the single entry point. A
+looping state stays until cleared; a one-off clip just plays:
+
+| State | Clip |
+|---|---|
+| `working` | hammering away |
+| `waiting` | chin-tapping, hands folded |
+| `review` | looking around at its surroundings |
+| `failed` | arm pops off, gets reattached |
+| `idle` or null | back to normal |
+
+The "Hold a state" menu drives the same call, so the states can be previewed
+now. The missing piece is a channel into the running process (a named pipe or
+a `--state working` argument forwarded to the running copy) so that something
+like a Claude Code hook can call it.
+
+## Art pipeline
+
+`tools/build_atlas.py` turns `art/source/` into the embedded
+`src/DesktopPet/Assets/atlas.png` + `atlas.json` + `pet.ico`, and writes a QA
+sheet to `art/build/contact.png`. Rerun it after changing the art, then
+rebuild.
+
+- Strips 01 to 12 carry real alpha but were drawn at different scales (up to
+  about 40% apart). Each strip is scaled to match the idle strip, using the
+  geometric mean of an eye-size ratio and a height ratio.
+- The walk cycle exists only in `13-atlas-preview.webp`, a labelled contact
+  sheet on a checkerboard. The script cuts the walk rows out of it and removes
+  the checkerboard (including holes between the legs). The walk frames are the
+  lowest-resolution art in the set; a clean full-resolution walk sheet can be
+  dropped in later.
+- Every frame is positioned relative to an anchor: the ground point under the
+  pet. The art is drawn for 150% scaling (144 dpi) and rescaled per monitor.
+
+```
+python tools\build_atlas.py
+dotnet publish src\DesktopPet\DesktopPet.csproj -c Release -o dist
+```
