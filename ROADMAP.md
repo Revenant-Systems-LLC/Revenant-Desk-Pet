@@ -79,6 +79,10 @@ only in the separate kid's edition (Desk-Pet-Maker).
 - Let the flight carry across a shared edge: switch the floor to the monitor
   he is over while in the air, rebuild the sprites when the DPI differs, and
   only stop at edges with no monitor beyond them.
+- Built 2026-09-27 (branch feature/throw-across-screens). He only crosses if
+  he is above the other screen's floor at the edge; lower than that, its side
+  is a wall and he bounces. Works for Damien's floating throw too. Up and down
+  edges (stacked monitors) are not handled yet.
 
 ## 7. Throwing, landing and shaking that feel physical
 

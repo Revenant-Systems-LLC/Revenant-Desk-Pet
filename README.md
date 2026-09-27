@@ -69,7 +69,7 @@ Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
 | Input | What happens |
 |---|---|
 | Left click | a random reaction (jump, wave, shrug, sometimes a mech move) |
-| Left drag | pick it up; let go to drop it (big drops end in a fall-apart) |
+| Left drag | pick it up; let go to drop it (big drops end in a fall-apart). Throw it hard at a side where another monitor sits and it flies onto that screen, if it is high enough to clear that screen's floor |
 | Right click, or the tray icon | menu: actions, held states, size, pet, stay put, come here, exit |
 | Tray icon double-click | "come here": drops it onto the middle of the main monitor |
 

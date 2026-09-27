@@ -87,6 +87,8 @@ sealed class Pet
     public double AnchorY => mode == Mode.Held ? Math.Min(dragAy, GroundY) : GroundY - Lift;
     public string? HeldState => holdClip;
     public (string Row, int Index) Frame { get; private set; } = ("idle", 0);
+    /// <summary>The monitor containing a screen point (its bounds and work area), or null if no monitor is there. Lets a throw carry on to the next screen.</summary>
+    public Func<double, double, (Native.RECT Bounds, Native.RECT Work)?>? MonitorAt { get; set; }
 
     // ------------------------------------------------------------ public API
 
@@ -406,17 +408,7 @@ sealed class Pet
         Lift -= vy * dt;
         X += vx * dt;
         vx *= Math.Exp(-1.5 * dt);
-        double m = 40 * Scale;
-        if (X < work.Left + m)
-        {
-            X = work.Left + m;
-            vx = Math.Abs(vx) * 0.4;
-        }
-        else if (X > work.Right - m)
-        {
-            X = work.Right - m;
-            vx = -Math.Abs(vx) * 0.4;
-        }
+        SideEdges(0.4);
         fallFrom = Math.Max(fallFrom, Lift); // thrown upward: count from the peak
         if (Lift <= 0)
         {
@@ -444,17 +436,7 @@ sealed class Pet
         vy *= drag;
         X += vx * dt;
         Lift -= vy * dt; // vy > 0 is downward
-        double m = 40 * Scale;
-        if (X < work.Left + m)
-        {
-            X = work.Left + m;
-            vx = Math.Abs(vx) * 0.5;
-        }
-        else if (X > work.Right - m)
-        {
-            X = work.Right - m;
-            vx = -Math.Abs(vx) * 0.5;
-        }
+        SideEdges(0.5);
         double maxLift = MaxLift;
         if (Lift < 0)
         {
@@ -481,6 +463,51 @@ sealed class Pet
             Log.Info("settled");
             GoIdle(1.5, 4);
         }
+    }
+
+    /// <summary>
+    /// In the air at a side of the work area: bounce off it, unless another
+    /// monitor lies beyond it at this height, in which case fly on over.
+    /// </summary>
+    void SideEdges(double bounce)
+    {
+        double m = 40 * Scale;
+        if (X < work.Left + m && vx <= 0 && !PassEdge(-1))
+        {
+            X = work.Left + m;
+            vx = Math.Abs(vx) * bounce;
+        }
+        else if (X > work.Right - m && vx >= 0 && !PassEdge(1))
+        {
+            X = work.Right - m;
+            vx = -Math.Abs(vx) * bounce;
+        }
+    }
+
+    /// <summary>True if another monitor lies beyond this side at the pet's height; once past the edge, the pet moves onto it (its floor becomes the floor).</summary>
+    bool PassEdge(int dir)
+    {
+        if (MonitorAt is null)
+            return false;
+        double absY = work.Bottom - Lift;
+        // Look just past this monitor's own edge (not the work area's: a taskbar may sit on that side).
+        if (MonitorAt((work.Left + work.Right) / 2.0, (work.Top + work.Bottom) / 2.0) is not var (bounds, _))
+            return false;
+        double probeX = dir < 0 ? bounds.Left - 1 : bounds.Right; // RECT right edges are exclusive
+        if (MonitorAt(probeX, absY - 60 * Scale) is not var (_, r) || r.SameAs(work))
+            return false;
+        double edge = dir < 0 ? work.Left : work.Right;
+        if (absY > r.Bottom)
+            return false; // below that monitor's floor: its side is a wall
+        if (dir < 0 ? X < edge : X >= edge)
+        {
+            double oldLift = Lift;
+            work = r;
+            Lift = r.Bottom - absY; // same height on screen, measured from the new floor
+            fallFrom += Lift - oldLift;
+            Log.Info($"flew onto the monitor with work area {r}");
+        }
+        return true;
     }
 
     void Landed(double height)

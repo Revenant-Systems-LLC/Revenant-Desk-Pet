@@ -59,6 +59,7 @@ sealed class PetContext : ApplicationContext
     double grabDx, grabDy;
     IntPtr focusBeforeMenu;
     Sprite? lastSprite;
+    Native.RECT petWorkSeen;
     int lastX, lastY;
 
     /// <param name="atlas">The pet to show; the context owns and disposes it.</param>
@@ -72,7 +73,7 @@ sealed class PetContext : ApplicationContext
         this.petId = petId;
         this.title = title;
         this.extendMenu = extendMenu;
-        pet = new Pet(atlas) { StayPut = settings.StayPut, Demo = demoMode };
+        pet = new Pet(atlas) { StayPut = settings.StayPut, Demo = demoMode, MonitorAt = MonitorAt };
         menu = BuildMenu();
 
         tray = new NotifyIcon
@@ -157,6 +158,11 @@ sealed class PetContext : ApplicationContext
             demo?.Tick(t);
             TickAiLink(t);
             pet.Tick(dt, cursor.X, cursor.Y, Native.IdleMilliseconds());
+            if (!pet.Work.SameAs(petWorkSeen))
+            {
+                petWorkSeen = pet.Work;
+                RefreshMonitor(force: false); // flew onto another monitor: its DPI now
+            }
             Render();
             savedX = (int)Math.Round(pet.X);
             savedY = (int)Math.Round(pet.GroundY);
@@ -443,9 +449,20 @@ sealed class PetContext : ApplicationContext
             ForceRedraw();
             Log.Info($"scale {newScale:0.###}: {sprites.Count} frames in {sw.ElapsedMilliseconds} ms");
         }
-        if (force || !work.SameAs(pet.Work))
+        // In the air the pet decides which monitor it is over (a throw can carry it
+        // across), unless its monitor has gone away (unplugged, rearranged).
+        if (force || (!work.SameAs(pet.Work) && (pet.Mode != Mode.Falling || !StillThere(pet.Work))))
             pet.SetWork(work);
     }
+
+    static (Native.RECT Bounds, Native.RECT Work)? MonitorAt(double x, double y)
+    {
+        IntPtr h = Native.MonitorFromPoint(new Native.POINT((int)Math.Round(x), (int)Math.Round(y)), Native.MONITOR_DEFAULTTONULL);
+        return h != IntPtr.Zero && Native.TryMonitor(h, out var bounds, out var work) ? (bounds, work) : null;
+    }
+
+    static bool StillThere(Native.RECT work) =>
+        MonitorAt((work.Left + work.Right) / 2.0, (work.Top + work.Bottom) / 2.0) is var (_, w) && w.SameAs(work);
 
     void OnDisplaySettingsChanged(object? sender, EventArgs e) => displayChanged = true;
 
