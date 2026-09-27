@@ -42,6 +42,9 @@ sealed class Pet
     const double LedgeHeadroom = 170;   // px that must be free above a ledge (below the top of the screen)
     const double JumpReach = 280;       // px; the highest ledge he jumps up to
     const double FloatRise = 180;       // px/s; a floating pet glides to a new floor no faster than this
+    // Chase mode: he goes after the mouse cursor. Pretend only: the real cursor is never touched.
+    const double ChaseRun = 2.4;        // times walking speed (his walk frames play twice as fast)
+    const double ChaseHopReach = 260;   // px above his head he jumps for the cursor
 
     Atlas atlas;
     readonly Random rng = new();
@@ -67,6 +70,9 @@ sealed class Pet
     int ownerMovedVersion = -1; // terrain refresh during which that window last moved
     Ledge? jumpFor;             // walking to a take-off spot, then jumping up onto this ledge
     bool selfMove;              // this fall is his own jump or step off: no drag, no fall-apart
+    double clipRate = 1;        // animation speed (running in chase mode)
+    int cursorX, cursorY;
+    double chaseHopAt, chaseCaughtAt = double.NegativeInfinity;
 
     public Pet(Atlas atlas)
     {
@@ -104,6 +110,8 @@ sealed class Pet
     public double GroundY => floorY;
     /// <summary>Window tops to stand on; null keeps it on the taskbar.</summary>
     public ITerrain? Terrain { get; set; }
+    /// <summary>Going after the mouse cursor.</summary>
+    public bool Chasing { get; private set; }
     public double AnchorY => mode == Mode.Held ? Math.Min(dragAy, GroundY) : GroundY - Lift;
     public string? HeldState => holdClip;
     public (string Row, int Index) Frame { get; private set; } = ("idle", 0);
@@ -160,6 +168,16 @@ sealed class Pet
     /// <summary>A left click on the pet.</summary>
     public void Poke()
     {
+        if (Chasing && mode == Mode.Falling && selfMove)
+        {
+            // swatted in mid-jump: knocked away from the cursor
+            vx = (X >= cursorX ? 1 : -1) * 700 * Scale;
+            vy = Math.Min(vy, -300 * Scale);
+            selfMove = false;
+            chaseHopAt = now + 1.5;
+            Log.Info("swatted in mid-air");
+            return;
+        }
         switch (mode)
         {
             case Mode.Asleep:
@@ -170,6 +188,13 @@ sealed class Pet
                 return;
             case Mode.Action when requested is "evolve" or "flex" or "leap" or "failed" or "dizzy":
                 return; // let the big ones finish
+        }
+        if (Chasing)
+        {
+            // swatted: knocked away from the cursor
+            Throw((X >= cursorX ? 1 : -1) * 700 * Scale, -550 * Scale);
+            chaseHopAt = now + 1.5;
+            return;
         }
         var reactions = new[] { ("jump", 40.0), ("wave", 30.0), ("happy", 20.0), ("shrug", 12.0), ("flex", 10.0), ("leap", 5.0), ("evolve", 3.0) }
             .Where(r => atlas.Has(r.Item1)).ToArray();
@@ -191,6 +216,23 @@ sealed class Pet
             return;
         double m = EdgeMargin * Scale;
         WalkTo(Math.Clamp(X + dx * Scale, work.Left + m, Math.Max(work.Left + m, work.Right - m)));
+    }
+
+    /// <summary>Chase mode on or off: he runs after the mouse cursor, jumps for it, and can be swatted away.</summary>
+    public void SetChasing(bool on)
+    {
+        if (Chasing == on)
+            return;
+        Chasing = on;
+        clipRate = 1;
+        Log.Info(on ? "chase on" : "chase off");
+        if (on && mode == Mode.Asleep)
+        {
+            napping = false;
+            Wake();
+        }
+        else if (!on && mode == Mode.Walk)
+            GoIdle();
     }
 
     /// <summary>Jump up onto a nearby window top, if there is one in reach (the AI link's "jumpup").</summary>
@@ -319,7 +361,8 @@ sealed class Pet
     public void Tick(double dt, int cursorX, int cursorY, uint idleMs)
     {
         now += dt;
-        clipT += dt;
+        clipT += dt * clipRate;
+        (this.cursorX, this.cursorY) = (cursorX, cursorY);
         switch (mode)
         {
             case Mode.Idle: TickIdle(idleMs); break;
@@ -331,12 +374,21 @@ sealed class Pet
             case Mode.Falling: TickFall(dt); break;
             case Mode.Asleep: TickSleep(idleMs); break;
         }
+        if (Chasing && mode is Mode.Idle or Mode.Walk)
+            SteerChase();
+        else
+            clipRate = 1;
         if (mode is not (Mode.Held or Mode.Falling))
             KeepFooting();
         if (Floats && mode is not (Mode.Held or Mode.Falling))
         {
             // follow the bob closely, never jump; glide to a new floor
-            double step = (HoverLift - Lift) * (1 - Math.Exp(-8 * dt)), cap = FloatRise * Scale * dt;
+            // chasing, he floats up until his head is at the cursor (a cursor on another screen counts as level with this one)
+            double cy = Math.Clamp(cursorY, work.Top, work.Bottom);
+            double want = Chasing && mode is Mode.Idle or Mode.Walk
+                ? Math.Clamp(GroundY - (cy + 140 * Scale), HoverLift, Math.Max(HoverLift, MaxLift))
+                : HoverLift;
+            double step = (want - Lift) * (1 - Math.Exp(-8 * dt)), cap = FloatRise * (Chasing ? 2 : 1) * Scale * dt;
             Lift += Math.Clamp(step, -cap, cap);
         }
         UpdateWatch(cursorX, cursorY);
@@ -358,7 +410,7 @@ sealed class Pet
         }
         if (clip.Name != "idle" && ClipDone)
             PlayClip("idle"); // fidget finished
-        if (Demo)
+        if (Demo || Chasing)
             return;
         if (now >= nextDecision)
         {
@@ -446,12 +498,12 @@ sealed class Pet
 
     void TickWalk(double dt)
     {
-        double speed = WalkSpeed;
+        double speed = Chasing ? WalkSpeed * ChaseRun : WalkSpeed;
         if (Floats)
         {
             // drift: ease in over the first second, ease out over the last 60 px
             double left = Math.Abs(walkTarget - X) / Scale;
-            speed = FloatSpeed * Math.Min(1, (now - walkStart) / 1.0) * Math.Clamp(left / 60, 0.2, 1);
+            speed = FloatSpeed * (Chasing ? 3 : 1) * Math.Min(1, (now - walkStart) / 1.0) * Math.Clamp(left / 60, 0.2, 1);
         }
         X += walkDir * speed * Scale * dt;
         if ((walkTarget - X) * walkDir <= 0)
@@ -612,6 +664,63 @@ sealed class Pet
             StartAction(height > HardFall * Scale && !selfMove ? "failed" : "land");
         dizzyPending = false;
         selfMove = false;
+    }
+
+    // ------------------------------------------------------------ chase
+
+    /// <summary>Head for the cursor along what he's standing on; under it, jump for it; at it, celebrate.</summary>
+    void SteerChase()
+    {
+        double lo, hi;
+        if (Floats)
+            (lo, hi) = (work.Left + 40 * Scale, work.Right - 40 * Scale);
+        else
+            (lo, hi) = WalkSpan();
+        double target = Math.Clamp(cursorX, Math.Min(lo, hi), Math.Max(lo, hi));
+        double dx = target - X;
+        if (Math.Abs(dx) > 24 * Scale)
+        {
+            if (mode != Mode.Walk || Math.Sign(dx) != walkDir)
+                WalkTo(target);
+            walkTarget = target; // keep following the cursor
+            clipRate = Floats ? 1 : ChaseRun; // walk frames keep pace with the run
+            return;
+        }
+        clipRate = 1;
+        if (mode == Mode.Walk)
+            GoIdle();
+
+        double headY = AnchorY - HeadHeight * Scale;
+        double above = headY - cursorY;
+        bool reachable = Math.Abs(cursorX - X) < 60 * Scale;
+        if (!Floats && reachable && above > 30 * Scale && above < ChaseHopReach * Scale && now >= chaseHopAt)
+        {
+            ChaseHop(above);
+            return;
+        }
+        if (reachable && Math.Abs(cursorY - headY) < 50 * Scale && now - chaseCaughtAt > 3)
+        {
+            chaseCaughtAt = now;
+            string? cheer = atlas.Has("happy") ? "happy" : atlas.Has("jump") ? "jump" : null;
+            if (cheer is not null)
+                StartAction(cheer); // got it!
+        }
+    }
+
+    void ChaseHop(double above)
+    {
+        double gAcc = Gravity * Scale;
+        double up = Math.Sqrt(2 * gAcc * (above + 20 * Scale));
+        ToTaskbar();
+        vy = -up;
+        vx = Math.Clamp((cursorX - X) * 2, -300 * Scale, 300 * Scale);
+        selfMove = true;
+        fallFrom = Lift;
+        napping = waking = false;
+        mode = Mode.Falling;
+        PlayClip("held");
+        chaseHopAt = now + 1.3;
+        Log.Info("jumps for the cursor");
     }
 
     // ------------------------------------------------------------ terrain

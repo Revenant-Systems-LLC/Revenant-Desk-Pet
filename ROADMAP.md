@@ -123,6 +123,11 @@ only in the separate kid's edition (Desk-Pet-Maker).
   jumps for it, tries to grab it, and you can dodge or swat him. Pretend
   only: he never actually moves or clicks your real cursor.
 - Name to pick, e.g. "Cursor Brawl" or "Mouse Hunt".
+- Built 2026-09-27 (branch feature/chase) as "Chase the mouse" in the menu:
+  runs after the cursor along the taskbar or the window he stands on (walk
+  frames at running speed), jumps for it when it's just above his head,
+  cheers on reaching it, and can be swatted (clicked) away, in mid-jump too.
+  Damien floats after it. No new art used.
 
 ## 9. More than one pet
 

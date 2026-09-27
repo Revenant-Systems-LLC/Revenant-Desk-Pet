@@ -63,6 +63,7 @@ sealed class PetContext : ApplicationContext
     DesktopTerrain? terrain;
     double nextTerrainAt;
     ToolStripMenuItem terrainItem = null!;
+    ToolStripMenuItem chaseItem = null!;
     int lastX, lastY;
 
     /// <param name="atlas">The pet to show; the context owns and disposes it.</param>
@@ -216,7 +217,7 @@ sealed class PetContext : ApplicationContext
     /// <summary>
     /// One line from the AI link, on the UI thread. Hook lines look like
     /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
-    /// direct commands are "state NAME", "play NAME", "pet ID", "fling VX VY", "jumpup", "ledges", "clear" and "ping".
+    /// direct commands are "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "jumpup", "ledges", "clear" and "ping".
     /// </summary>
     void OnAiLine(string line)
     {
@@ -259,6 +260,9 @@ sealed class PetContext : ApplicationContext
                 break;
             case "ping":
                 Log.Info("ai link ping");
+                break;
+            case "chase":
+                pet.SetChasing(arg?.ToLowerInvariant() switch { "on" => true, "off" => false, _ => !pet.Chasing });
                 break;
             case "jumpup":
                 if (!pet.JumpUp())
@@ -727,6 +731,8 @@ sealed class PetContext : ApplicationContext
             settings.Save();
         });
 
+        chaseItem = new ToolStripMenuItem("Chase the mouse", null, (_, _) => pet.SetChasing(!pet.Chasing));
+
         stayPutItem = new ToolStripMenuItem("Stay put", null, (_, _) =>
         {
             pet.StayPut = !pet.StayPut;
@@ -742,6 +748,7 @@ sealed class PetContext : ApplicationContext
             states,
             size,
             petMenu,
+            chaseItem,
             stayPutItem,
             terrainItem,
             new ToolStripMenuItem("Come here", null, (_, _) => ComeHere()),
@@ -757,6 +764,7 @@ sealed class PetContext : ApplicationContext
         {
             stayPutItem.Checked = pet.StayPut;
             terrainItem.Checked = settings.Terrain;
+            chaseItem.Checked = pet.Chasing;
             foreach (var (item, value) in sizeItems)
                 item.Checked = Math.Abs(value - settings.Size) < 1e-6;
             FillActionMenus(actions, states);

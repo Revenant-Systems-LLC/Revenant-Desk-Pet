@@ -62,7 +62,7 @@ Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
 
 Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
 `"pet damien"`, `"fling 900 -700"` (throw it at that speed, px/s), `"jumpup"`
-(jump onto a window top within reach), `"ledges"` (log the window tops it can
+(jump onto a window top within reach), `"chase on"` / `"chase off"`, `"ledges"` (log the window tops it can
 see, positions only), `"clear"`, `"ping"`.
 
 ## Controls
@@ -72,7 +72,8 @@ see, positions only), `"clear"`, `"ping"`.
 | Left click | a random reaction (jump, wave, shrug, sometimes a mech move) |
 | Left drag | pick it up; let go to drop it (big drops end in a fall-apart). Throw it hard at a side where another monitor sits and it flies onto that screen, if it is high enough to clear that screen's floor |
 | Shake it while holding it | four quick swings back and forth: when you let go and it lands, it's dizzy and wobbles for a few seconds |
-| Right click, or the tray icon | menu: actions, held states, size, pet, stay put, climb on windows, come here, exit |
+| Right click, or the tray icon | menu: actions, held states, size, pet, chase the mouse, stay put, climb on windows, come here, exit |
+| "Chase the mouse" | he runs after the cursor along whatever he stands on, jumps for it when it's just above his head, and cheers when he reaches it; click him to swat him away (in mid-jump too). Damien floats after it. Pretend only: the real cursor is never moved. Overrides "Stay put" while on |
 | Tray icon double-click | "come here": drops it onto the middle of the main monitor |
 
 With nothing to do it walks, fidgets, and follows the cursor with its head
