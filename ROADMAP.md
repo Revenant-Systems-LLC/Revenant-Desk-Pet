@@ -138,6 +138,12 @@ only in the separate kid's edition (Desk-Pet-Maker).
   other: wave, chase, bump into each other, and later talk (each with its own
   LLM persona).
 - Needs the single-instance rule relaxed to one process hosting several pets.
+- Built 2026-09-27 (branch feature/multi-pet) the simpler way: each friend is
+  its own process (own lock, settings and log, no AI link), started from the
+  main pet's "Friends" menu, leaving when the main pet exits. They find each
+  other by where the other pet windows are (read-only): look at each other,
+  wave on meeting, visit, and stop to say hello instead of walking through
+  (then pass). Talking to each other comes with the LLM.
 
 ## 10. Art still to do (new orange/yellow RevBot)
 

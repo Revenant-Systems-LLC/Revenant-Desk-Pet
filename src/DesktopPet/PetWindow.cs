@@ -6,6 +6,9 @@ namespace DesktopPet;
 /// </summary>
 sealed class PetWindow : Form
 {
+    /// <summary>Every pet window's title; other pets find each other by it.</summary>
+    public const string Title = "Desktop Pet";
+
     public event Action? DpiChangedRaw;
 
     public PetWindow()
@@ -15,7 +18,7 @@ sealed class PetWindow : Form
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
         TopMost = true;
-        Text = "Desktop Pet";
+        Text = Title;
         Bounds = new Rectangle(0, 0, 1, 1);
     }
 

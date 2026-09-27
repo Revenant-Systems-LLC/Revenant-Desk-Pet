@@ -19,11 +19,20 @@ static class Program
         if (args.Any(a => a.Equals("--selftest", StringComparison.OrdinalIgnoreCase)))
             return SelfTest();
 
-        using var mutex = new Mutex(true, @"Local\DesktopPet-6f1c2d9e", out bool first);
+        // --friend ID: company for the main pet, in its own process (own settings,
+        // log and single-instance lock; leaves when --parent PID exits).
+        string? friend = ArgValue(args, "--friend") is string f && Atlas.IsBuiltIn(f) ? f : null;
+        int? parent = int.TryParse(ArgValue(args, "--parent"), out int pp) ? pp : null;
+        if (friend is not null && parent is null)
+            friend = null;
+
+        using var mutex = new Mutex(true, friend is null ? @"Local\DesktopPet-6f1c2d9e" : $@"Local\DesktopPet-6f1c2d9e-friend-{friend}", out bool first);
         if (!first)
             return 0;
 
-        Log.Init();
+        if (friend is not null)
+            Settings.FileName = $"settings.{friend}.json";
+        Log.Init(friend is null ? "pet" : $"pet.{friend}");
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => Log.Error("ui thread", e.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Log.Error("unhandled", e.ExceptionObject as Exception);
@@ -33,7 +42,17 @@ static class Program
         Log.Info($"start {typeof(Program).Assembly.GetName().Version} demo={demo}");
         try
         {
-            string pet = Settings.Load().Pet;
+            var saved = Settings.Load();
+            if (friend is not null)
+            {
+                // a friend is always that pet, and turns up next to whoever invited it
+                saved.Pet = friend;
+                int ai = Array.FindIndex(args, a => a.Equals("--near", StringComparison.OrdinalIgnoreCase));
+                if (ai >= 0 && ai + 2 < args.Length && int.TryParse(args[ai + 1], out int nx) && int.TryParse(args[ai + 2], out int ny))
+                    (saved.X, saved.Y) = (nx, ny);
+                saved.Save();
+            }
+            string pet = saved.Pet;
             Atlas atlas;
             Icon icon;
             try
@@ -57,7 +76,8 @@ static class Program
                 atlas = Atlas.Load(pet);
                 icon = Atlas.LoadIcon(pet, SystemInformation.SmallIconSize);
             }
-            Application.Run(new PetContext(atlas, icon, demo, petId: pet));
+            Application.Run(new PetContext(atlas, icon, demo, title: friend is null ? "Desktop Pet" : $"Desktop Pet: {Atlas.BuiltInPets.First(p => p.Id == friend).Name}",
+                petId: pet, friendOf: friend is null ? null : parent));
         }
         catch (Exception ex)
         {
@@ -66,6 +86,12 @@ static class Program
         }
         Log.Info("exit");
         return 0;
+    }
+
+    static string? ArgValue(string[] args, string name)
+    {
+        int i = Array.FindIndex(args, a => a.Equals(name, StringComparison.OrdinalIgnoreCase));
+        return i >= 0 && i + 1 < args.Length ? args[i + 1] : null;
     }
 
     static int SelfTest()

@@ -32,6 +32,8 @@ sealed class DesktopTerrain : ITerrain
     readonly uint selfPid = (uint)Environment.ProcessId;
     readonly List<(IntPtr Hwnd, Native.RECT Rect, bool Ledge)> windows = new();
     readonly StringBuilder className = new(64);
+    readonly StringBuilder title = new(32);
+    readonly List<(IntPtr Hwnd, uint Pid, Native.RECT Rect)> pets = new();
     readonly Native.EnumWindowsProc collect;
     List<Ledge> ledges = new();
 
@@ -42,11 +44,15 @@ sealed class DesktopTerrain : ITerrain
     }
 
     public IReadOnlyList<Ledge> Ledges => ledges;
+
+    /// <summary>Other desk pets on screen (other processes' pet windows), as of the last refresh.</summary>
+    public IReadOnlyList<(IntPtr Hwnd, uint Pid, Native.RECT Rect)> OtherPets => pets;
     public int Version { get; private set; }
 
     public void Refresh()
     {
         windows.Clear();
+        pets.Clear();
         Native.EnumWindows(collect, IntPtr.Zero); // top of the z-order first
 
         var next = new List<Ledge>();
@@ -97,6 +103,13 @@ sealed class DesktopTerrain : ITerrain
             return true;
         if (Cloaked(hwnd) || !TryFrame(hwnd, out var r) || r.Right - r.Left < 1 || r.Bottom - r.Top < 1)
             return true;
+        title.Clear();
+        Native.GetWindowText(hwnd, title, title.Capacity);
+        if ((ex & Native.WS_EX_LAYERED) != 0 && title.ToString() == PetWindow.Title)
+        {
+            pets.Add((hwnd, pid, r)); // another desk pet: a friend, not terrain
+            return true;
+        }
         className.Clear();
         Native.GetClassName(hwnd, className, className.Capacity);
         string cls = className.ToString();

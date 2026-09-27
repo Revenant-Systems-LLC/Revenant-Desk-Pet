@@ -61,6 +61,8 @@ sealed class PetContext : ApplicationContext
     Sprite? lastSprite;
     Native.RECT petWorkSeen;
     DesktopTerrain? terrain;
+    readonly int? friendOf;      // a friend pet: its inviter's process id
+    double nextFriendCheckAt;
     double nextTerrainAt;
     ToolStripMenuItem terrainItem = null!;
     ToolStripMenuItem chaseItem = null!;
@@ -82,9 +84,11 @@ sealed class PetContext : ApplicationContext
     /// <param name="trayIcon">Tray icon; owned and disposed by the context.</param>
     /// <param name="extendMenu">Adds extra items to the pet's menu (optional).</param>
     /// <param name="petId">Which built-in pet <paramref name="atlas"/> is.</param>
+    /// <param name="friendOf">For a friend pet: the process id of the pet that invited it (it leaves with it).</param>
     public PetContext(Atlas atlas, Icon trayIcon, bool demoMode, string title = "Desktop Pet",
-        Action<ContextMenuStrip, PetContext>? extendMenu = null, string petId = "revbot")
+        Action<ContextMenuStrip, PetContext>? extendMenu = null, string petId = "revbot", int? friendOf = null)
     {
+        this.friendOf = friendOf;
         this.atlas = atlas;
         this.petId = petId;
         this.title = title;
@@ -113,24 +117,26 @@ sealed class PetContext : ApplicationContext
         window.Show();
         RefreshMonitor(force: true);
         terrain = new DesktopTerrain(window.Handle);
+        terrain.Refresh();
         if (settings.Terrain)
-        {
-            terrain.Refresh();
             pet.Terrain = terrain;
-        }
 
         if (demoMode)
             demo = new DemoRunner(pet, atlas);
         else
             pet.Play("wave");
 
-        try
+        // Only the main pet listens to Claude Code; a friend is just company.
+        if (friendOf is null)
         {
-            aiLink = new AiLink(OnAiLine);
-        }
-        catch (Exception ex)
-        {
-            Log.Error("ai link start", ex); // the pet works without it
+            try
+            {
+                aiLink = new AiLink(OnAiLine);
+            }
+            catch (Exception ex)
+            {
+                Log.Error("ai link start", ex); // the pet works without it
+            }
         }
 
         timer.Tick += OnTick;
@@ -176,10 +182,21 @@ sealed class PetContext : ApplicationContext
                     Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_NOOWNERZORDER);
             }
 
-            if (pet.Terrain is not null && terrain is not null && t >= nextTerrainAt)
+            if (terrain is not null && t >= nextTerrainAt)
             {
-                nextTerrainAt = t + 0.5;
+                nextTerrainAt = t + 0.5; // windows to climb, and other pets
                 terrain.Refresh();
+                pet.Friend = NearestFriend();
+            }
+            if (friendOf is int parent && t >= nextFriendCheckAt)
+            {
+                nextFriendCheckAt = t + 2;
+                if (!ProcessAlive(parent))
+                {
+                    Log.Info("the pet that invited me has gone; going home");
+                    Quit();
+                    return;
+                }
             }
 
             Native.GetCursorPos(out var cursor);
@@ -234,7 +251,7 @@ sealed class PetContext : ApplicationContext
     /// <summary>
     /// One line from the AI link, on the UI thread. Hook lines look like
     /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
-    /// direct commands are "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "jumpup", "ledges", "clear" and "ping".
+    /// direct commands are "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "invite ID", "sendhome", "jumpup", "ledges", "clear" and "ping".
     /// </summary>
     void OnAiLine(string line)
     {
@@ -280,6 +297,13 @@ sealed class PetContext : ApplicationContext
                 break;
             case "chase":
                 pet.SetChasing(arg?.ToLowerInvariant() switch { "on" => true, "off" => false, _ => !pet.Chasing });
+                break;
+            case "invite" when arg is not null && friendOf is null:
+                if (Atlas.IsBuiltIn(arg.ToLowerInvariant()) && arg.ToLowerInvariant() != petId)
+                    InviteFriend(arg.ToLowerInvariant());
+                break;
+            case "sendhome":
+                SendFriendsHome();
                 break;
             case "jumpup":
                 if (!pet.JumpUp())
@@ -508,6 +532,70 @@ sealed class PetContext : ApplicationContext
         {
             watchingTyping = watching;
             Log.Info(watching ? "watching you type" : "stopped watching");
+        }
+    }
+
+    /// <summary>The closest other desk pet on this pet's monitor.</summary>
+    (double X, double Feet)? NearestFriend()
+    {
+        if (terrain is null)
+            return null;
+        (double X, double Feet)? best = null;
+        double bestD = double.MaxValue;
+        var w = pet.Work;
+        foreach (var (_, _, r) in terrain.OtherPets)
+        {
+            double x = (r.Left + r.Right) / 2.0, feet = r.Bottom;
+            if (x < w.Left || x > w.Right || feet < w.Top || feet > w.Bottom + 4)
+                continue;
+            double d = Math.Abs(x - pet.X);
+            if (d < bestD)
+                (best, bestD) = ((x, feet), d);
+        }
+        return best;
+    }
+
+    static bool ProcessAlive(int pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            return !p.HasExited;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>Start another built-in pet as company, in its own process, next to this one.</summary>
+    void InviteFriend(string id)
+    {
+        try
+        {
+            string exe = Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "DesktopPet.exe");
+            var psi = new ProcessStartInfo(exe) { UseShellExecute = false };
+            foreach (string a in new[] { "--friend", id, "--parent", Environment.ProcessId.ToString(),
+                "--near", ((int)Math.Round(pet.X + 220 * pet.Scale)).ToString(), pet.Work.Bottom.ToString() })
+                psi.ArgumentList.Add(a);
+            using var _ = Process.Start(psi);
+            Log.Info($"invited {id}");
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"invite {id}", ex);
+        }
+    }
+
+    /// <summary>Close the friend pets this one invited (only DesktopPet processes: never anything else).</summary>
+    void SendFriendsHome()
+    {
+        terrain?.Refresh();
+        string me = Process.GetCurrentProcess().ProcessName;
+        foreach (var (hwnd, pid, _) in terrain?.OtherPets ?? [])
+        {
+            if (ProcessName(pid) == me)
+                Native.PostMessage(hwnd, Native.WM_CLOSE, IntPtr.Zero, IntPtr.Zero);
         }
     }
 
@@ -797,6 +885,12 @@ sealed class PetContext : ApplicationContext
 
         chaseItem = new ToolStripMenuItem("Chase the mouse", null, (_, _) => pet.SetChasing(!pet.Chasing));
 
+        var friendsMenu = new ToolStripMenuItem("Friends");
+        foreach (var (id, name) in Atlas.BuiltInPets)
+            friendsMenu.DropDownItems.Add(new ToolStripMenuItem($"Invite {name}", null, (_, _) => InviteFriend(id)) { Tag = id });
+        friendsMenu.DropDownItems.Add(new ToolStripSeparator());
+        friendsMenu.DropDownItems.Add("Send friends home", null, (_, _) => SendFriendsHome());
+
         stayPutItem = new ToolStripMenuItem("Stay put", null, (_, _) =>
         {
             pet.StayPut = !pet.StayPut;
@@ -812,6 +906,7 @@ sealed class PetContext : ApplicationContext
             states,
             size,
             petMenu,
+            friendsMenu,
             chaseItem,
             stayPutItem,
             terrainItem,
@@ -834,6 +929,11 @@ sealed class PetContext : ApplicationContext
             FillActionMenus(actions, states);
             foreach (ToolStripMenuItem item in petItems.DropDownItems)
                 item.Checked = (string?)item.Tag == petId;
+            // a friend is one fixed pet and invites nobody; the main pet invites anyone but itself
+            petMenu.Visible = friendsMenu.Visible = friendOf is null;
+            foreach (var item in friendsMenu.DropDownItems.OfType<ToolStripMenuItem>())
+                if (item.Tag is string fid)
+                    item.Visible = fid != petId;
         };
         m.Closed += (_, _) => ReturnFocus();
         return m;

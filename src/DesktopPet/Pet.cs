@@ -73,6 +73,8 @@ sealed class Pet
     double clipRate = 1;        // animation speed (running in chase mode)
     int cursorX, cursorY;
     double chaseHopAt, chaseCaughtAt = double.NegativeInfinity;
+    bool friendNear, visiting;
+    double friendFarSince, lastFriendGreet = double.NegativeInfinity, lastBump = double.NegativeInfinity;
 
     public Pet(Atlas atlas)
     {
@@ -117,6 +119,8 @@ sealed class Pet
     /// terminal or Claude; null otherwise. He stops wandering and watches it.
     /// </summary>
     public (double X, double Y)? Attention { get; set; }
+    /// <summary>The nearest other desk pet on this monitor: where it stands (x, feet y), or null.</summary>
+    public (double X, double Feet)? Friend { get; set; }
     public double AnchorY => mode == Mode.Held ? Math.Min(dragAy, GroundY) : GroundY - Lift;
     public string? HeldState => holdClip;
     public (string Row, int Index) Frame { get; private set; } = ("idle", 0);
@@ -459,6 +463,8 @@ sealed class Pet
         Offer("evolve", 0.8);
         if (!StayPut)
             options.Add((StartWalk, 50));
+        if (!StayPut && Friend is (double fx, _) && Math.Abs(fx - X) > 260 * Scale)
+            options.Add((() => Visit(fx), 10));
         if (!StayPut && !Floats && Terrain is { } terrain)
         {
             if (PickJumpTarget(terrain) is Ledge up)
@@ -492,6 +498,7 @@ sealed class Pet
         if (mode is Mode.Held or Mode.Falling)
             return;
         jumpFor = null;
+        visiting = false;
         if (Math.Abs(target - X) < 20 * Scale)
         {
             GoIdle();
@@ -516,9 +523,29 @@ sealed class Pet
             speed = FloatSpeed * (Chasing ? 3 : 1) * Math.Min(1, (now - walkStart) / 1.0) * Math.Clamp(left / 60, 0.2, 1);
         }
         X += walkDir * speed * Scale * dt;
+        if (visiting && Friend is (double vfx, _))
+        {
+            // the friend moved: aim for where it is now
+            double aim = VisitTarget(vfx);
+            if (Math.Abs(aim - walkTarget) > 60 * Scale && Math.Sign(aim - X) == walkDir)
+                walkTarget = aim;
+        }
+        if (!Chasing && Friend is (double fx, double feet) && Math.Abs(feet - AnchorY) < 60 * Scale &&
+            (fx - X) * walkDir > 0 && Math.Abs(fx - X) < 80 * Scale && (visiting || now - lastBump > 25))
+        {
+            // about to bump into the other pet: stop and say hello (now and then; otherwise he walks on past)
+            lastBump = now;
+            ArriveAtFriend();
+            return;
+        }
         if ((walkTarget - X) * walkDir <= 0)
         {
             X = walkTarget;
+            if (visiting)
+            {
+                ArriveAtFriend();
+                return;
+            }
             if (jumpFor is Ledge g)
             {
                 jumpFor = null;
@@ -676,11 +703,72 @@ sealed class Pet
         selfMove = false;
     }
 
+    // ------------------------------------------------------------ friends
+
+    /// <summary>Walk (or drift) over to the other pet and stop beside it.</summary>
+    void Visit(double friendX)
+    {
+        WalkTo(VisitTarget(friendX));
+        if (mode == Mode.Walk)
+        {
+            visiting = true; // after WalkTo, which clears it
+            Log.Info("going to see the other pet");
+        }
+    }
+
+    /// <summary>A spot beside the friend, on this pet's side of it.</summary>
+    double VisitTarget(double friendX)
+    {
+        var (lo, hi) = Floats ? (work.Left + 40 * Scale, work.Right - 40 * Scale) : WalkSpan();
+        double side = friendX > X ? -1 : 1;
+        return Math.Clamp(friendX + side * 110 * Scale, Math.Min(lo, hi), Math.Max(lo, hi));
+    }
+
+    void ArriveAtFriend()
+    {
+        visiting = false;
+        if (now - lastFriendGreet > 20)
+        {
+            lastFriendGreet = now;
+            StartAction("wave"); // falls back to a jump for a pet without a wave
+            return;
+        }
+        GoIdle(2, 5);
+    }
+
+    /// <summary>
+    /// In idle with the cursor far away: look at the other pet if it's close,
+    /// and wave when it comes over after a while apart.
+    /// </summary>
+    int? WatchFriend()
+    {
+        if (Friend is not (double fx, double feet) || mode != Mode.Idle || !atlas.HasLook)
+        {
+            friendNear = false;
+            return null;
+        }
+        double dx = fx - X, dy = (feet - HeadHeight * Scale) - (AnchorY - HeadHeight * Scale);
+        double d = Math.Sqrt(dx * dx + dy * dy);
+        bool near = d < 450 * Scale;
+        if (near && !friendNear && now - friendFarSince > 30 && now - lastFriendGreet > 60 && d < 260 * Scale)
+        {
+            lastFriendGreet = now;
+            friendNear = true;
+            StartAction("wave");
+            return null;
+        }
+        if (!near && friendNear)
+            friendFarSince = now;
+        friendNear = near;
+        return near ? LookToward(dx, dy) : null;
+    }
+
     // ------------------------------------------------------------ chase
 
     /// <summary>Head for the cursor along what he's standing on; under it, jump for it; at it, celebrate.</summary>
     void SteerChase()
     {
+        visiting = false; // the cursor wins over a visit
         double lo, hi;
         if (Floats)
             (lo, hi) = (work.Left + 40 * Scale, work.Right - 40 * Scale);
@@ -1045,7 +1133,7 @@ sealed class Pet
             if (cursorNear)
                 cursorFarSince = now;
             cursorNear = false;
-            lookIndex = null;
+            lookIndex = WatchFriend();
             return;
         }
         bool entered = !cursorNear;

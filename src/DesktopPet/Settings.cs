@@ -14,7 +14,10 @@ sealed class Settings
     /// <summary>Climb onto and walk along the tops of open windows.</summary>
     public bool Terrain { get; set; } = true;
 
-    static string FilePath => Path.Combine(AppContext.BaseDirectory, "settings.json");
+    /// <summary>"settings.json", or "settings.&lt;pet&gt;.json" for a friend pet.</summary>
+    public static string FileName { get; set; } = "settings.json";
+
+    static string FilePath => Path.Combine(AppContext.BaseDirectory, FileName);
 
     public static Settings Load()
     {

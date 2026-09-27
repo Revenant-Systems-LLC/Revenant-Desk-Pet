@@ -62,7 +62,7 @@ Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
 
 Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
 `"pet damien"`, `"fling 900 -700"` (throw it at that speed, px/s), `"jumpup"`
-(jump onto a window top within reach), `"chase on"` / `"chase off"`, `"ledges"` (log the window tops it can
+(jump onto a window top within reach), `"chase on"` / `"chase off"`, `"invite damien"`, `"sendhome"`, `"ledges"` (log the window tops it can
 see, positions only), `"clear"`, `"ping"`.
 
 ## Controls
@@ -72,7 +72,8 @@ see, positions only), `"clear"`, `"ping"`.
 | Left click | a random reaction (jump, wave, shrug, sometimes a mech move) |
 | Left drag | pick it up; let go to drop it (big drops end in a fall-apart). Throw it hard at a side where another monitor sits and it flies onto that screen, if it is high enough to clear that screen's floor |
 | Shake it while holding it | four quick swings back and forth: when you let go and it lands, it's dizzy and wobbles for a few seconds |
-| Right click, or the tray icon | menu: actions, held states, size, pet, chase the mouse, stay put, climb on windows, come here, exit |
+| Right click, or the tray icon | menu: actions, held states, size, pet, friends, chase the mouse, stay put, climb on windows, come here, exit |
+| Friends > Invite Damien | a second pet joins, in its own process next to this one: they look at each other, wave when they meet, sometimes go over to visit, and stop to say hello instead of walking through each other (then walk on past). "Send friends home" closes them; they also leave when the main pet exits |
 | "Chase the mouse" | he runs after the cursor along whatever he stands on, jumps for it when it's just above his head, and cheers when he reaches it; click him to swat him away (in mid-jump too). Damien floats after it. Pretend only: the real cursor is never moved. Overrides "Stay put" while on |
 | Tray icon double-click | "come here": drops it onto the middle of the main monitor |
 
@@ -88,7 +89,8 @@ falls asleep, and it wakes up when you come back.
 
 Both go next to the exe, never anywhere else:
 
-- `settings.json`: size, stay-put, last position, which pet
+- `settings.json`: size, stay-put, last position, which pet (a friend pet
+  keeps its own `settings.<pet>.json` and `logs\pet.<pet>.log`)
 - `logs\pet.log`: state changes and errors, capped at two 1 MB files
 
 ## The AI hookup (later)

@@ -10,13 +10,13 @@ static class Log
     static string? lastError;
     static DateTime lastErrorAt;
 
-    public static void Init()
+    public static void Init(string name = "pet")
     {
         try
         {
             string dir = Path.Combine(AppContext.BaseDirectory, "logs");
             Directory.CreateDirectory(dir);
-            path = Path.Combine(dir, "pet.log");
+            path = Path.Combine(dir, name + ".log");
             written = File.Exists(path) ? new FileInfo(path).Length : 0;
         }
         catch
