@@ -38,6 +38,15 @@ PETS = {
         # rows replaced by separate strips: frames found left to right; "arc"
         # keeps the heights from the strip, levelled so first and last frames stand on the ground
         "strips": {"jump": (ROOT / "art/source/damien/jump-spin-fixed.webp", "arc")},
+        # rows made of separate frame files, played in the listed order and kept where
+        # each file puts him in its cell. The flip-and-squish, as Dave picked it
+        # (2026-09-27): his frames d00, d01, d02, d04, d05, d06 (he has no d03 for it).
+        # It was drawn smaller than the sheet, so it is scaled up until the roundest
+        # frame's ball matches the idle ball.
+        "files": {"thrown": [ROOT / "art/source/damien/flip" / n for n in
+                             ["d00.png", "d01 (5).png", "d02 (5).png", "d04 (5).png", "d05 (5).png", "d06 (2).png"]]},
+        # he floats: no legs, no gravity (see Pet.cs)
+        "floats": True,
         # size relative to the sheet: the strip was drawn larger than the sheet cells
         "strip_match_row": "idle",
         # rows whose frames are resized so the ball matches the idle ball (he turns, he shouldn't shrink)
@@ -54,6 +63,7 @@ PETS = {
             "working": ("working", "all", 7, True),
             "review": ("review", "all", 6, True),
             "look": ("look", "all", 1, True),
+            "thrown": ("thrown", "all", 10, False),
         },
     },
 }
@@ -168,6 +178,18 @@ def main():
                     img, ox, oy = np.array(im), ox * f, oy * f  # scaled about the ground point under it
             placed.append((row, k, img, int(round(ox)), int(round(oy))))
 
+    for row, paths in cfg.get("files", {}).items():
+        cellsf = [drop_specks(np.array(Image.open(pth).convert("RGBA"))) for pth in paths]
+        masks = [c[..., 3] > 16 for c in cellsf]
+        ground = max(bbox(m)[3] for m in masks)
+        f = idle_radius / max(ball_radius(m) for m in masks) if idle_radius else 1.0
+        for k, (cell, m) in enumerate(zip(cellsf, masks)):
+            x0, y0, x1, y1 = bbox(m)
+            ax = cell.shape[1] / 2
+            im = Image.fromarray(cell[y0:y1, x0:x1], "RGBA").convert("RGBa")
+            im = im.resize((max(1, round(im.width * f)), max(1, round(im.height * f))), Image.LANCZOS).convert("RGBA")
+            placed.append((row, k, np.array(im), int(round((x0 - ax) * f)), int(round((y0 - ground) * f))))
+
     # size strips to match the sheet: compare the strip's first frame height with the reference row
     ref_row = cfg["strip_match_row"]
     ref_heights = [p[2].shape[0] for p in placed if p[0] == ref_row]
@@ -220,7 +242,7 @@ def main():
 
     ASSETS.mkdir(parents=True, exist_ok=True)
     atlas.save(ASSETS / f"{name}.atlas.png", optimize=True)
-    manifest = dict(version=1, pad=PAD, scale=1.0, frames=frames, clips=clips)
+    manifest = dict(version=1, pad=PAD, scale=1.0, floats=bool(cfg.get("floats")), frames=frames, clips=clips)
     (ASSETS / f"{name}.atlas.json").write_text(json.dumps(manifest, indent=1))
 
     idle0 = next(f for f in frames if f["row"] == "idle" and f["index"] == 0)

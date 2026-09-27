@@ -61,7 +61,8 @@ Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
 `SessionEnd`.
 
 Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
-`"pet damien"`, `"clear"`, `"ping"`.
+`"pet damien"`, `"fling 900 -700"` (throw it at that speed, px/s), `"clear"`,
+`"ping"`.
 
 ## Controls
 
@@ -106,6 +107,12 @@ like a Claude Code hook can call it.
 Two pets are built in: RevBot and Damien (the red devil ball). Pick one from
 the "Pet" menu; the choice is saved. Damien's atlas is built from his sheet by
 `python toolsuild_codex_pet.py damien`.
+
+Damien floats (`"floats": true` in his atlas): he hovers a little above the
+floor with a slow bob, drifts instead of walking (his idle frames, never the
+walk rows), and has no gravity. Thrown, he plays his flip-and-squish, slides
+to a stop and eases back to hover height. The hover, bob, drift and drag
+numbers are the `Float*`/`Hover*`/`Bob*` constants at the top of `Pet.cs`.
 
 ## Art pipeline
 

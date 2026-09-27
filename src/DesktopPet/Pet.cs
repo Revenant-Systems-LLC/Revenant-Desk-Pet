@@ -3,10 +3,10 @@ namespace DesktopPet;
 enum Mode
 {
     Idle,     // standing; fidgets, watches the cursor, decides what to do next
-    Walk,     // heading for a spot on the floor
+    Walk,     // heading for a spot on the floor (a floating pet drifts there)
     Action,   // playing a one-off clip (or a looping clip for a set time)
     Held,     // being dragged by the mouse
-    Falling,  // dropped or thrown, coming down under gravity
+    Falling,  // dropped or thrown: coming down under gravity, or a floating pet drifting to a stop
     Asleep,   // user is away, or told to nap
     Hold,     // an outside caller pinned a state (the future AI hook)
 }
@@ -25,6 +25,13 @@ sealed class Pet
     const double Gravity = 3000;        // px/s^2
     const double HardFall = 260;        // drops higher than this end in the "failed" clip
     const double SleepAfterSeconds = 300;
+    // Floating pets (Damien). All code motion, no drawn frames: easy to tune or drop.
+    const double HoverHeight = 36;      // px above the floor
+    const double BobAmplitude = 4;      // px up and down
+    const double BobPeriod = 2.6;       // s
+    const double FloatSpeed = 55;       // px/s drifting
+    const double FloatDrag = 2.2;       // 1/s; a throw slows down this fast
+    const double FlipSpeed = 350;       // px/s; thrown at least this fast plays "thrown" (flip and squish)
     const double NapSeconds = 120;
 
     Atlas atlas;
@@ -35,7 +42,7 @@ sealed class Pet
     string requested = "idle";
     double clipT, now;
     double nextDecision, nextFidget, actionUntil;
-    double walkTarget;
+    double walkTarget, walkStart;
     int walkDir;
     double vx, vy, fallFrom, dragAy;
     string? holdClip;
@@ -51,6 +58,11 @@ sealed class Pet
     }
 
     bool CanSleep => atlas.Has("sleeping") && atlas.Has("doze_off") && atlas.Has("wake");
+    bool Floats => atlas.Floats;
+    /// <summary>Where a floating pet rests: a little above the floor, bobbing.</summary>
+    double HoverLift => Math.Min(MaxLift, (HoverHeight + BobAmplitude * Math.Sin(now * 2 * Math.PI / BobPeriod)) * Scale);
+    /// <summary>Highest a floating pet goes, so it stays on screen (tiny work areas included).</summary>
+    double MaxLift => Math.Max(0, work.Bottom - work.Top - 160 * Scale);
 
     /// <summary>Switch to a different pet: whatever was playing stops, and it stands idle.</summary>
     public void ReplaceAtlas(Atlas next)
@@ -61,7 +73,7 @@ sealed class Pet
         napping = waking = false;
         vx = vy = 0;
         Lift = 0;
-        GoIdle();
+        GoIdle(); // a floating pet rises to hover height from here (Tick)
     }
 
     public double X { get; set; }
@@ -185,6 +197,11 @@ sealed class Pet
         vy = Math.Clamp(throwVy, -1500 * Scale, 1500 * Scale);
         Lift = Math.Max(0, GroundY - dragAy);
         ClampX(); // dragged past the screen edge: bring it back into view
+        if (Floats)
+        {
+            StartFlight();
+            return;
+        }
         if (Lift < 1)
         {
             Lift = 0;
@@ -194,6 +211,20 @@ sealed class Pet
         fallFrom = Lift;
         mode = Mode.Falling;
         Log.Info($"dropped from {Lift:0}px");
+    }
+
+    /// <summary>Throw it from where it is (the AI link's "fling"). From the floor it starts with a small hop, or a sideways throw would just land.</summary>
+    public void Throw(double throwVx, double throwVy)
+    {
+        if (mode is Mode.Held or Mode.Falling)
+            return;
+        BeginDrag();
+        if (!Floats && Lift < 1)
+        {
+            dragAy = GroundY - 1;
+            throwVy = Math.Min(throwVy, -400 * Scale);
+        }
+        EndDrag(throwVx, throwVy);
     }
 
     /// <summary>Put the pet somewhere new and let it drop in.</summary>
@@ -206,6 +237,11 @@ sealed class Pet
         Lift = Math.Max(0, height);
         fallFrom = Lift;
         napping = waking = false;
+        if (Floats)
+        {
+            StartFlight(); // floats down to hover height
+            return;
+        }
         PlayClip("held");
         mode = Mode.Falling;
     }
@@ -244,6 +280,8 @@ sealed class Pet
             case Mode.Falling: TickFall(dt); break;
             case Mode.Asleep: TickSleep(idleMs); break;
         }
+        if (Floats && mode is not (Mode.Held or Mode.Falling))
+            Lift += (HoverLift - Lift) * (1 - Math.Exp(-8 * dt)); // follow the bob closely, never jump
         UpdateWatch(cursorX, cursorY);
 
         int? look = atlas.HasLook ? forcedLook ?? lookIndex : null;
@@ -333,14 +371,23 @@ sealed class Pet
         }
         walkTarget = target;
         walkDir = target > X ? 1 : -1;
+        walkStart = now;
         mode = Mode.Walk;
-        PlayClip(walkDir > 0 ? "walk_right" : "walk_left");
+        // A floating pet never plays its walk rows (Dave: no squash-and-hop while he drifts).
+        PlayClip(Floats ? "float" : walkDir > 0 ? "walk_right" : "walk_left");
         Log.Info($"walk {X:0} -> {target:0}");
     }
 
     void TickWalk(double dt)
     {
-        X += walkDir * WalkSpeed * Scale * dt;
+        double speed = WalkSpeed;
+        if (Floats)
+        {
+            // drift: ease in over the first second, ease out over the last 60 px
+            double left = Math.Abs(walkTarget - X) / Scale;
+            speed = FloatSpeed * Math.Min(1, (now - walkStart) / 1.0) * Math.Clamp(left / 60, 0.2, 1);
+        }
+        X += walkDir * speed * Scale * dt;
         if ((walkTarget - X) * walkDir <= 0)
         {
             X = walkTarget;
@@ -350,6 +397,11 @@ sealed class Pet
 
     void TickFall(double dt)
     {
+        if (Floats)
+        {
+            TickFlight(dt);
+            return;
+        }
         vy += Gravity * Scale * dt;
         Lift -= vy * dt;
         X += vx * dt;
@@ -370,6 +422,64 @@ sealed class Pet
         {
             Lift = 0;
             Landed(fallFrom);
+        }
+    }
+
+    /// <summary>A floating pet let go of (or dropped in): it drifts, slows, and settles at hover height.</summary>
+    void StartFlight()
+    {
+        mode = Mode.Falling;
+        napping = waking = false;
+        lookIndex = null;
+        // Only a drawn, one-off "thrown" clip; a looping stand-in would never finish.
+        bool flung = Math.Sqrt(vx * vx + vy * vy) >= FlipSpeed * Scale && atlas.Has("thrown") && !atlas.Clip("thrown").Loop;
+        PlayClip(flung ? "thrown" : "idle");
+        Log.Info(flung ? "thrown (floating)" : "let go (floating)");
+    }
+
+    void TickFlight(double dt)
+    {
+        double drag = Math.Exp(-FloatDrag * dt);
+        vx *= drag;
+        vy *= drag;
+        X += vx * dt;
+        Lift -= vy * dt; // vy > 0 is downward
+        double m = 40 * Scale;
+        if (X < work.Left + m)
+        {
+            X = work.Left + m;
+            vx = Math.Abs(vx) * 0.5;
+        }
+        else if (X > work.Right - m)
+        {
+            X = work.Right - m;
+            vx = -Math.Abs(vx) * 0.5;
+        }
+        double maxLift = MaxLift;
+        if (Lift < 0)
+        {
+            Lift = 0;
+            vy = -Math.Abs(vy) * 0.5; // bounce up off the floor
+        }
+        else if (Lift > maxLift)
+        {
+            // let go up near the top edge: sink back under it smoothly, no jump
+            Lift = maxLift + (Lift - maxLift) * Math.Exp(-6 * dt);
+            vy = Math.Abs(vy) * 0.5;
+        }
+
+        // As he slows, ease back toward hover height.
+        double speed = Math.Sqrt(vx * vx + vy * vy);
+        double slow = Math.Clamp(1 - speed / (200 * Scale), 0, 1);
+        Lift += (HoverLift - Lift) * (1 - Math.Exp(-3 * slow * dt));
+
+        if (requested == "thrown" && ClipDone)
+            PlayClip("idle");
+        if (requested != "thrown" && speed < 15 * Scale && Math.Abs(Lift - HoverLift) < 6 * Scale)
+        {
+            vx = vy = 0;
+            Log.Info("settled");
+            GoIdle(1.5, 4);
         }
     }
 

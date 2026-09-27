@@ -136,6 +136,10 @@ only in the separate kid's edition (Desk-Pet-Maker).
   from his art folder belong in there instead.
 - Most of the time he has no mouth; the smile and the toothy grin are for
   moments.
+- Built 2026-09-27 (branch feature/damien-float): hover with bob, drift on
+  idle frames, no-gravity throw with the flip-and-squish (his d00, d01, d02,
+  d04, d05, d06), then ease back to hover. Terrain (floating over windows and
+  icons) comes with section 5.
 - **Animating him is Dave's own job.** Code picks and times only frames Dave
   drew, in the order he numbered them; no invented frames. His wave (tail
   wiggle) was pulled 2026-09-27: its motion scribbles looked wrong and it

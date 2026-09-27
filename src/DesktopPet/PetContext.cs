@@ -192,7 +192,7 @@ sealed class PetContext : ApplicationContext
     /// <summary>
     /// One line from the AI link, on the UI thread. Hook lines look like
     /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
-    /// direct commands are "state NAME", "play NAME", "pet ID", "clear" and "ping".
+    /// direct commands are "state NAME", "play NAME", "pet ID", "fling VX VY", "clear" and "ping".
     /// </summary>
     void OnAiLine(string line)
     {
@@ -225,6 +225,9 @@ sealed class PetContext : ApplicationContext
                 break;
             case "pet" when arg is not null:
                 SwitchPet(arg.ToLowerInvariant());
+                break;
+            case "fling" when parts.Length >= 3:
+                Fling(parts[1], parts[2]);
                 break;
             case "clear":
                 aiSessions.Clear();
@@ -730,6 +733,18 @@ sealed class PetContext : ApplicationContext
             oldIcon?.Dispose();
         }
         Log.Info("pet replaced");
+    }
+
+    /// <summary>Throw the pet from where it is, as if picked up and let go at this speed (px/s at normal size).</summary>
+    void Fling(string vxText, string vyText)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        if (dragging || pressed ||
+            !double.TryParse(vxText, System.Globalization.NumberStyles.Float, inv, out double vx) ||
+            !double.TryParse(vyText, System.Globalization.NumberStyles.Float, inv, out double vy) ||
+            !double.IsFinite(vx) || !double.IsFinite(vy))
+            return;
+        pet.Throw(vx * pet.Scale, vy * pet.Scale); // the speed is clamped there
     }
 
     /// <summary>Switch to another built-in pet and remember the choice.</summary>

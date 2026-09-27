@@ -35,6 +35,8 @@ sealed class Manifest
     public int Pad { get; set; }
     /// <summary>Display scale at 144 dpi and "Normal" size; 1 means one sheet pixel per screen pixel.</summary>
     public double Scale { get; set; } = 1.0;
+    /// <summary>The pet floats instead of walking: no legs, no gravity.</summary>
+    public bool Floats { get; set; }
     public List<FrameDef> Frames { get; set; } = new();
     public Dictionary<string, ClipDef> Clips { get; set; } = new();
 }
@@ -70,6 +72,7 @@ sealed class Atlas : IDisposable
         ["review"] = ["think"],
         ["working"] = ["think"],
         ["held"] = ["jump"],
+        ["thrown"] = ["held", "jump"],
         ["failed"] = ["land"],
         ["walk_left"] = ["walk_right"],
     };
@@ -79,6 +82,7 @@ sealed class Atlas : IDisposable
 
     public IReadOnlyDictionary<string, ClipDef> Clips => manifest.Clips;
     public double BaseScale => manifest.Scale > 0 ? manifest.Scale : 1.0;
+    public bool Floats => manifest.Floats;
     public bool HasLook { get; }
 
     Atlas(Bitmap sheet, Manifest manifest, bool hasLook)
