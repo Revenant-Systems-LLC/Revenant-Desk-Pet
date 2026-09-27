@@ -11,6 +11,8 @@ sealed class Settings
     public int? Y { get; set; }
     /// <summary>Which built-in pet to show ("revbot", "damien").</summary>
     public string Pet { get; set; } = "revbot";
+    /// <summary>Climb onto and walk along the tops of open windows.</summary>
+    public bool Terrain { get; set; } = true;
 
     static string FilePath => Path.Combine(AppContext.BaseDirectory, "settings.json");
 

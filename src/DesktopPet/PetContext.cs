@@ -60,6 +60,9 @@ sealed class PetContext : ApplicationContext
     IntPtr focusBeforeMenu;
     Sprite? lastSprite;
     Native.RECT petWorkSeen;
+    DesktopTerrain? terrain;
+    double nextTerrainAt;
+    ToolStripMenuItem terrainItem = null!;
     int lastX, lastY;
 
     /// <param name="atlas">The pet to show; the context owns and disposes it.</param>
@@ -96,6 +99,12 @@ sealed class PetContext : ApplicationContext
         PlaceInitially();
         window.Show();
         RefreshMonitor(force: true);
+        terrain = new DesktopTerrain(window.Handle);
+        if (settings.Terrain)
+        {
+            terrain.Refresh();
+            pet.Terrain = terrain;
+        }
 
         if (demoMode)
             demo = new DemoRunner(pet, atlas);
@@ -154,6 +163,12 @@ sealed class PetContext : ApplicationContext
                     Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_NOOWNERZORDER);
             }
 
+            if (pet.Terrain is not null && terrain is not null && t >= nextTerrainAt)
+            {
+                nextTerrainAt = t + 0.5;
+                terrain.Refresh();
+            }
+
             Native.GetCursorPos(out var cursor);
             demo?.Tick(t);
             TickAiLink(t);
@@ -201,7 +216,7 @@ sealed class PetContext : ApplicationContext
     /// <summary>
     /// One line from the AI link, on the UI thread. Hook lines look like
     /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
-    /// direct commands are "state NAME", "play NAME", "pet ID", "fling VX VY", "clear" and "ping".
+    /// direct commands are "state NAME", "play NAME", "pet ID", "fling VX VY", "jumpup", "ledges", "clear" and "ping".
     /// </summary>
     void OnAiLine(string line)
     {
@@ -244,6 +259,17 @@ sealed class PetContext : ApplicationContext
                 break;
             case "ping":
                 Log.Info("ai link ping");
+                break;
+            case "jumpup":
+                if (!pet.JumpUp())
+                    Log.Info("nothing to jump up onto");
+                break;
+            case "ledges": // what the terrain sees: positions only, never window titles
+                if (terrain is not null)
+                {
+                    terrain.Refresh();
+                    Log.Info($"ledges ({terrain.Ledges.Count}): " + string.Join(" ", terrain.Ledges.Select(g => $"[{g.Left:0}..{g.Right:0} y{g.Y:0}]")));
+                }
                 break;
             default:
                 Log.Info($"ai link: ignored '{Trim(line)}'");
@@ -692,6 +718,15 @@ sealed class PetContext : ApplicationContext
         }
         petItems = petMenu;
 
+        terrainItem = new ToolStripMenuItem("Climb on windows", null, (_, _) =>
+        {
+            settings.Terrain = !settings.Terrain;
+            pet.Terrain = settings.Terrain ? terrain : null;
+            if (settings.Terrain)
+                terrain?.Refresh();
+            settings.Save();
+        });
+
         stayPutItem = new ToolStripMenuItem("Stay put", null, (_, _) =>
         {
             pet.StayPut = !pet.StayPut;
@@ -708,6 +743,7 @@ sealed class PetContext : ApplicationContext
             size,
             petMenu,
             stayPutItem,
+            terrainItem,
             new ToolStripMenuItem("Come here", null, (_, _) => ComeHere()),
         });
         extendMenu?.Invoke(m, this);
@@ -720,6 +756,7 @@ sealed class PetContext : ApplicationContext
         m.Opening += (_, _) =>
         {
             stayPutItem.Checked = pet.StayPut;
+            terrainItem.Checked = settings.Terrain;
             foreach (var (item, value) in sizeItems)
                 item.Checked = Math.Abs(value - settings.Size) < 1e-6;
             FillActionMenus(actions, states);

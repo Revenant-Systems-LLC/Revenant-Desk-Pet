@@ -61,8 +61,9 @@ Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
 `SessionEnd`.
 
 Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
-`"pet damien"`, `"fling 900 -700"` (throw it at that speed, px/s), `"clear"`,
-`"ping"`.
+`"pet damien"`, `"fling 900 -700"` (throw it at that speed, px/s), `"jumpup"`
+(jump onto a window top within reach), `"ledges"` (log the window tops it can
+see, positions only), `"clear"`, `"ping"`.
 
 ## Controls
 
@@ -71,7 +72,7 @@ Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
 | Left click | a random reaction (jump, wave, shrug, sometimes a mech move) |
 | Left drag | pick it up; let go to drop it (big drops end in a fall-apart). Throw it hard at a side where another monitor sits and it flies onto that screen, if it is high enough to clear that screen's floor |
 | Shake it while holding it | four quick swings back and forth: when you let go and it lands, it's dizzy and wobbles for a few seconds |
-| Right click, or the tray icon | menu: actions, held states, size, pet, stay put, come here, exit |
+| Right click, or the tray icon | menu: actions, held states, size, pet, stay put, climb on windows, come here, exit |
 | Tray icon double-click | "come here": drops it onto the middle of the main monitor |
 
 With nothing to do it walks, fidgets, and follows the cursor with its head
@@ -102,6 +103,22 @@ The "Hold a state" menu drives the same call, so the states can be previewed
 now. The missing piece is a channel into the running process (a named pipe or
 a `--state working` argument forwarded to the running copy) so that something
 like a Claude Code hook can call it.
+
+## Windows are terrain
+
+The desktop works like a 2D side-scroller: the taskbar is the ground and the
+visible top edges of open windows are ledges. RevBot jumps up onto ledges
+within reach, walks along them, rides along when the window is moved, and
+drops off when he walks off the end or the window closes, is minimised or gets
+covered. Throw him onto a window and he lands on it. Damien floats over the
+highest window top beneath him. Turn it off with "Climb on windows" in the
+menu.
+
+It only reads where windows are (EnumWindows plus DWM frame bounds, every half
+second); it never moves, clicks, focuses or sends anything to them. Maximised
+windows leave no room above them, so on a screen full of maximised windows
+there is nothing to climb yet. Windows taller than his jump need climbing,
+which waits for climbing art; desktop icons are not platforms yet.
 
 ## Pets
 

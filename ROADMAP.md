@@ -63,6 +63,15 @@ only in the separate kid's edition (Desk-Pet-Maker).
   everything.
 - He reacts to what is behind him: climbs up window edges and desktop icons
   like walls, stands on title bars, peeks around corners.
+- Built 2026-09-27 (branch feature/terrain): visible window tops are ledges
+  (occlusion-aware, refreshed every 0.5 s, read-only). RevBot jumps up onto
+  ledges within about 280 px, walks along them, rides along when the window
+  moves, steps off the ends, and drops when it closes, minimises or gets
+  covered; thrown, he lands on them. Damien floats over the highest window top
+  beneath him. "Climb on windows" menu toggle. Still to do: climbing tall
+  window sides waits for real "climb" art (Dave, 2026-09-27: no code-made
+  stand-in); desktop icons as platforms (UI Automation, read-only); peeking
+  around corners.
 - Maybe, now and then, he grabs a window's scrollbar just to mess with you,
   without damaging anything. Mechanics to be talked through with Dave first;
   it would be the one exception to "pretend only" below, so nothing gets

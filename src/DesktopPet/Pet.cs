@@ -38,6 +38,10 @@ sealed class Pet
     const double DizzySeconds = 3.2;    // shaken, then let go: wobbles this long
     const double DizzyTilt = 10;        // degrees either way
     const double NapSeconds = 120;
+    // Terrain: window tops are ledges (the desktop as a 2D side-scroller).
+    const double LedgeHeadroom = 170;   // px that must be free above a ledge (below the top of the screen)
+    const double JumpReach = 280;       // px; the highest ledge he jumps up to
+    const double FloatRise = 180;       // px/s; a floating pet glides to a new floor no faster than this
 
     Atlas atlas;
     readonly Random rng = new();
@@ -57,6 +61,12 @@ sealed class Pet
     double landAt = double.NegativeInfinity, landImpact, dizzyAt;
     bool dizzyPending;
     Native.RECT work;
+    double floorY;              // the floor under the pet: the taskbar (work.Bottom) or a window's top edge
+    IntPtr standingOn;          // the window whose top edge that is; zero for the taskbar
+    double ownerLeft, ownerTop; // where that window was, to ride along when it moves
+    int ownerMovedVersion = -1; // terrain refresh during which that window last moved
+    Ledge? jumpFor;             // walking to a take-off spot, then jumping up onto this ledge
+    bool selfMove;              // this fall is his own jump or step off: no drag, no fall-apart
 
     public Pet(Atlas atlas)
     {
@@ -69,7 +79,7 @@ sealed class Pet
     /// <summary>Where a floating pet rests: a little above the floor, bobbing.</summary>
     double HoverLift => Math.Min(MaxLift, (HoverHeight + BobAmplitude * Math.Sin(now * 2 * Math.PI / BobPeriod)) * Scale);
     /// <summary>Highest a floating pet goes, so it stays on screen (tiny work areas included).</summary>
-    double MaxLift => Math.Max(0, work.Bottom - work.Top - 160 * Scale);
+    double MaxLift => Math.Max(0, floorY - work.Top - 160 * Scale);
 
     /// <summary>Switch to a different pet: whatever was playing stops, and it stands idle.</summary>
     public void ReplaceAtlas(Atlas next)
@@ -90,7 +100,10 @@ sealed class Pet
     public bool Demo { get; set; }
     public Mode Mode => mode;
     public Native.RECT Work => work;
-    public double GroundY => work.Bottom;
+    /// <summary>The floor under the pet: the taskbar, or the top edge of the window it stands on.</summary>
+    public double GroundY => floorY;
+    /// <summary>Window tops to stand on; null keeps it on the taskbar.</summary>
+    public ITerrain? Terrain { get; set; }
     public double AnchorY => mode == Mode.Held ? Math.Min(dragAy, GroundY) : GroundY - Lift;
     public string? HeldState => holdClip;
     public (string Row, int Index) Frame { get; private set; } = ("idle", 0);
@@ -180,6 +193,16 @@ sealed class Pet
         WalkTo(Math.Clamp(X + dx * Scale, work.Left + m, Math.Max(work.Left + m, work.Right - m)));
     }
 
+    /// <summary>Jump up onto a nearby window top, if there is one in reach (the AI link's "jumpup").</summary>
+    public bool JumpUp()
+    {
+        if (mode is Mode.Held or Mode.Falling || Floats || Terrain is not { } t || PickJumpTarget(t) is not Ledge g)
+            return false;
+        napping = waking = false;
+        StartJumpTo(g);
+        return true;
+    }
+
     /// <summary>Shaken hard while being held: dizzy once let go and at rest.</summary>
     public void Shaken()
     {
@@ -192,6 +215,9 @@ sealed class Pet
 
     public void BeginDrag()
     {
+        ToTaskbar(); // measured from the taskbar while held, wherever it was standing
+        jumpFor = null;
+        selfMove = false;
         mode = Mode.Held;
         dizzyPending = false;
         napping = waking = false;
@@ -250,6 +276,10 @@ sealed class Pet
     public void DropIn(double x, Native.RECT newWork, double height)
     {
         work = newWork;
+        standingOn = IntPtr.Zero;
+        floorY = work.Bottom;
+        jumpFor = null;
+        selfMove = false;
         X = x;
         ClampX();
         vx = vy = 0;
@@ -269,16 +299,18 @@ sealed class Pet
     public void SetWork(Native.RECT r)
     {
         work = r;
+        if (standingOn == IntPtr.Zero)
+            floorY = r.Bottom; // on the taskbar: it may have moved
         if (mode == Mode.Held)
         {
             Lift = Math.Max(0, GroundY - dragAy);
             return;
         }
         ClampX();
-        if (mode == Mode.Walk)
+        if (mode == Mode.Walk && jumpFor is null)
         {
-            double m = EdgeMargin * Scale;
-            walkTarget = Math.Clamp(walkTarget, work.Left + m, Math.Max(work.Left + m, work.Right - m));
+            var (lo, hi) = WalkSpan();
+            walkTarget = Math.Clamp(walkTarget, lo, Math.Max(lo, hi));
         }
     }
 
@@ -299,8 +331,14 @@ sealed class Pet
             case Mode.Falling: TickFall(dt); break;
             case Mode.Asleep: TickSleep(idleMs); break;
         }
+        if (mode is not (Mode.Held or Mode.Falling))
+            KeepFooting();
         if (Floats && mode is not (Mode.Held or Mode.Falling))
-            Lift += (HoverLift - Lift) * (1 - Math.Exp(-8 * dt)); // follow the bob closely, never jump
+        {
+            // follow the bob closely, never jump; glide to a new floor
+            double step = (HoverLift - Lift) * (1 - Math.Exp(-8 * dt)), cap = FloatRise * Scale * dt;
+            Lift += Math.Clamp(step, -cap, cap);
+        }
         UpdateWatch(cursorX, cursorY);
 
         Pose = CurrentPose();
@@ -359,13 +397,19 @@ sealed class Pet
         Offer("evolve", 0.8);
         if (!StayPut)
             options.Add((StartWalk, 50));
+        if (!StayPut && !Floats && Terrain is { } terrain)
+        {
+            if (PickJumpTarget(terrain) is Ledge up)
+                options.Add((() => StartJumpTo(up), 14));
+            if (standingOn != IntPtr.Zero)
+                options.Add((StepOffEdge, 5));
+        }
         Pick(options.ToArray())();
     }
 
     void StartWalk()
     {
-        double m = EdgeMargin * Scale;
-        double lo = work.Left + m, hi = work.Right - m;
+        var (lo, hi) = WalkSpan();
         if (hi - lo < 50 * Scale)
         {
             GoIdle();
@@ -385,6 +429,7 @@ sealed class Pet
     {
         if (mode is Mode.Held or Mode.Falling)
             return;
+        jumpFor = null;
         if (Math.Abs(target - X) < 20 * Scale)
         {
             GoIdle();
@@ -412,6 +457,12 @@ sealed class Pet
         if ((walkTarget - X) * walkDir <= 0)
         {
             X = walkTarget;
+            if (jumpFor is Ledge g)
+            {
+                jumpFor = null;
+                Launch(g);
+                return;
+            }
             GoIdle(1.5, 5);
         }
     }
@@ -423,12 +474,23 @@ sealed class Pet
             TickFlight(dt);
             return;
         }
+        double feetBefore = GroundY - Lift;
         vy += Gravity * Scale * dt;
         Lift -= vy * dt;
         X += vx * dt;
-        vx *= Math.Exp(-1.5 * dt);
+        if (!selfMove)
+            vx *= Math.Exp(-1.5 * dt);
         SideEdges(0.4);
         fallFrom = Math.Max(fallFrom, Lift); // thrown upward: count from the peak
+        if (vy > 0 && Terrain is { } terrain && LedgeCrossed(terrain, feetBefore, GroundY - Lift) is Ledge g)
+        {
+            double peak = GroundY - fallFrom;
+            SetFloor(g.Y, g.Owner);
+            Lift = 0;
+            Log.Info("landed on a window");
+            Landed(g.Y - peak);
+            return;
+        }
         if (Lift <= 0)
         {
             Lift = 0;
@@ -439,6 +501,7 @@ sealed class Pet
     /// <summary>A floating pet let go of (or dropped in): it drifts, slows, and settles at hover height.</summary>
     void StartFlight()
     {
+        ToTaskbar();
         mode = Mode.Falling;
         napping = waking = false;
         lookIndex = null;
@@ -526,6 +589,7 @@ sealed class Pet
         {
             double oldLift = Lift;
             work = r;
+            floorY = r.Bottom;
             Lift = r.Bottom - absY; // same height on screen, measured from the new floor
             fallFrom += Lift - oldLift;
             Log.Info($"flew onto the monitor with work area {r}");
@@ -545,8 +609,243 @@ sealed class Pet
         if (dizzyPending)
             StartDizzy();
         else
-            StartAction(height > HardFall * Scale ? "failed" : "land");
+            StartAction(height > HardFall * Scale && !selfMove ? "failed" : "land");
         dizzyPending = false;
+        selfMove = false;
+    }
+
+    // ------------------------------------------------------------ terrain
+
+    /// <summary>Stand on a different floor without moving on screen (Lift is measured from the floor).</summary>
+    void SetFloor(double y, IntPtr owner)
+    {
+        Lift += y - floorY;
+        floorY = y;
+        standingOn = owner;
+        if (owner != IntPtr.Zero && Terrain is { } t && t.TryGetTop(owner, out double l, out _, out double top))
+            (ownerLeft, ownerTop) = (l, top);
+    }
+
+    void ToTaskbar() => SetFloor(work.Bottom, IntPtr.Zero);
+
+    /// <summary>Room for the pet above a ledge at this height, and above the taskbar.</summary>
+    bool LedgeFits(double y) => y - work.Top >= LedgeHeadroom * Scale && y < work.Bottom - 8 * Scale;
+
+    /// <summary>The ledge of the window it stands on, as of the last refresh.</summary>
+    Ledge? CurrentLedge(ITerrain t)
+    {
+        foreach (var g in t.Ledges)
+        {
+            if (g.Owner == standingOn && Math.Abs(g.Y - floorY) < 3 && X >= g.Left - 6 && X <= g.Right + 6)
+                return g;
+        }
+        return null;
+    }
+
+    /// <summary>Where it can walk: along the ledge it stands on, or the taskbar.</summary>
+    (double Lo, double Hi) WalkSpan()
+    {
+        if (!Floats && standingOn != IntPtr.Zero)
+        {
+            if (Terrain is not { } t || CurrentLedge(t) is not Ledge g)
+                return (X, X);
+            double inset = 24 * Scale;
+            return (Math.Max(g.Left, work.Left) + inset, Math.Min(g.Right, work.Right) - inset);
+        }
+        double m = EdgeMargin * Scale;
+        return (work.Left + m, work.Right - m);
+    }
+
+    /// <summary>
+    /// Every tick while not in the air. Standing on a window: ride along when
+    /// it moves; step off when it closes, gets covered, or he walks off the
+    /// end. A floating pet hovers over whatever is under it.
+    /// </summary>
+    void KeepFooting()
+    {
+        if (Floats)
+        {
+            FloatOverTerrain();
+            return;
+        }
+        if (standingOn == IntPtr.Zero)
+            return;
+        if (Terrain is not { } t || !t.TryGetTop(standingOn, out double l, out double r, out double top))
+        {
+            StepOff("the window went away");
+            return;
+        }
+        if (l != ownerLeft || top != ownerTop)
+        {
+            double dx = l - ownerLeft;
+            X += dx;
+            walkTarget += dx;
+            floorY += top - ownerTop;
+            (ownerLeft, ownerTop) = (l, top);
+            ownerMovedVersion = t.Version; // what covers it is known again after the next refresh
+        }
+        bool fresh = ownerMovedVersion != t.Version;
+        if (X < l || X > r)
+            StepOff("walked off the edge");
+        else if (!LedgeFits(floorY) || X < work.Left || X > work.Right)
+            StepOff("no room up there");
+        else if (fresh && CurrentLedge(t) is null)
+            StepOff("the window got covered");
+    }
+
+    void StepOff(string why)
+    {
+        Log.Info($"off the window ({why})");
+        ToTaskbar();
+        vx = mode == Mode.Walk ? walkDir * WalkSpeed * Scale : 0;
+        vy = 0;
+        jumpFor = null;
+        selfMove = true;
+        fallFrom = Lift;
+        napping = waking = false;
+        mode = Mode.Falling;
+        PlayClip("held");
+    }
+
+    /// <summary>
+    /// The first ledge the feet passed through on the way down this tick, where
+    /// its window is now (the snapshot can be half a second old and the window
+    /// may be moving). A ledge level with the feet at the start doesn't count:
+    /// that's the one it just stepped or was thrown off.
+    /// </summary>
+    Ledge? LedgeCrossed(ITerrain t, double feetBefore, double feetAfter)
+    {
+        if (X < work.Left || X > work.Right)
+            return null;
+        double slack = 40 * Scale;
+        Ledge? best = null;
+        foreach (var g in t.Ledges)
+        {
+            if (g.Y < feetBefore - slack || g.Y > feetAfter + slack || X < g.Left - slack || X > g.Right + slack)
+                continue;
+            if (!t.TryGetTop(g.Owner, out double l, out double r, out double top))
+                continue;
+            if (top <= feetBefore || top > feetAfter || !LedgeFits(top) ||
+                X < Math.Max(l, g.Left - slack) + 4 * Scale || X > Math.Min(r, g.Right + slack) - 4 * Scale)
+                continue;
+            if (best is not Ledge b || top < b.Y)
+                best = g with { Y = top };
+        }
+        return best;
+    }
+
+    /// <summary>A ledge a little way up, near enough to jump onto.</summary>
+    Ledge? PickJumpTarget(ITerrain t)
+    {
+        var (lo, hi) = WalkSpan();
+        var candidates = new List<Ledge>();
+        foreach (var g in t.Ledges)
+        {
+            double rise = floorY - g.Y;
+            double l = Math.Max(g.Left, work.Left), r = Math.Min(g.Right, work.Right);
+            double gap = X < l ? l - X : X > r ? X - r : 0;
+            if (rise >= 50 * Scale && rise <= JumpReach * Scale && r - l >= 90 * Scale && LedgeFits(g.Y) &&
+                gap <= 350 * Scale && hi > lo)
+                candidates.Add(g);
+        }
+        return candidates.Count > 0 ? candidates[rng.Next(candidates.Count)] : null;
+    }
+
+    void StartJumpTo(Ledge g)
+    {
+        var (lo, hi) = WalkSpan();
+        double l = Math.Max(g.Left, work.Left), r = Math.Min(g.Right, work.Right);
+        // Take off from beside the ledge (or right under it) and arc up onto its near end.
+        double takeoff = X < l ? l - 70 * Scale : X > r ? r + 70 * Scale : X;
+        takeoff = Math.Clamp(takeoff, lo, Math.Max(lo, hi));
+        if (Math.Abs(takeoff - X) < 20 * Scale)
+        {
+            Launch(g);
+            return;
+        }
+        WalkTo(takeoff);
+        if (mode == Mode.Walk)
+            jumpFor = g; // after WalkTo, which clears it
+    }
+
+    void Launch(Ledge g)
+    {
+        // The window may have moved or closed on the way to the take-off spot.
+        if (Terrain is not { } t || !t.TryGetTop(g.Owner, out double wl, out double wr, out double top) || Math.Abs(top - g.Y) > 3)
+        {
+            GoIdle();
+            return;
+        }
+        double l = Math.Max(g.Left, work.Left), r = Math.Min(g.Right, work.Right);
+        double landX = Math.Clamp(X, l + 45 * Scale, Math.Max(l + 45 * Scale, r - 45 * Scale));
+        double h = floorY - top;
+        if (h < 20 * Scale)
+        {
+            GoIdle();
+            return;
+        }
+        double gAcc = Gravity * Scale, over = 45 * Scale; // peak a little above the ledge
+        double up = Math.Sqrt(2 * gAcc * (h + over));
+        double flight = up / gAcc + Math.Sqrt(2 * over / gAcc);
+        ToTaskbar();
+        vy = -up;
+        vx = (landX - X) / flight;
+        selfMove = true;
+        fallFrom = Lift;
+        napping = waking = false;
+        mode = Mode.Falling;
+        PlayClip("held");
+        Log.Info($"jump up {h:0}px onto a window");
+    }
+
+    /// <summary>Walk to just past the nearer end of this ledge, and drop off.</summary>
+    void StepOffEdge()
+    {
+        if (Terrain is not { } t || CurrentLedge(t) is not Ledge g)
+        {
+            GoIdle();
+            return;
+        }
+        double past = 30 * Scale, room = 60 * Scale;
+        var ends = new List<double>();
+        if (g.Left - past > work.Left + room)
+            ends.Add(g.Left - past);
+        if (g.Right + past < work.Right - room)
+            ends.Add(g.Right + past);
+        if (ends.Count == 0)
+        {
+            GoIdle();
+            return;
+        }
+        WalkTo(ends.OrderBy(e => Math.Abs(e - X)).First());
+    }
+
+    /// <summary>A floating pet hovers over the highest window top under it, or the taskbar.</summary>
+    void FloatOverTerrain()
+    {
+        double target = work.Bottom;
+        IntPtr owner = IntPtr.Zero;
+        if (Terrain is { } t)
+        {
+            foreach (var g in t.Ledges)
+            {
+                if (X >= g.Left && X <= g.Right && g.Y < target && LedgeFits(g.Y))
+                {
+                    target = g.Y;
+                    owner = g.Owner;
+                }
+            }
+            // where that window is now: it may have moved since the last refresh
+            if (owner != IntPtr.Zero)
+            {
+                if (t.TryGetTop(owner, out _, out _, out double top) && LedgeFits(top))
+                    target = top;
+                else
+                    (target, owner) = (work.Bottom, IntPtr.Zero);
+            }
+        }
+        if (target != floorY || owner != standingOn)
+            SetFloor(target, owner);
     }
 
     void StartDizzy() => StartAction("dizzy", DizzySeconds); // plays idle until a "dizzy" clip is drawn
@@ -589,6 +888,7 @@ sealed class Pet
 
     void StartSleep()
     {
+        jumpFor = null;
         mode = Mode.Asleep;
         waking = napping = false;
         lookIndex = null;
@@ -648,6 +948,7 @@ sealed class Pet
 
     void StartAction(string name, double? loopSeconds = null)
     {
+        jumpFor = null;
         if (name == "dizzy")
             dizzyAt = now;
         mode = Mode.Action;
@@ -667,6 +968,7 @@ sealed class Pet
 
     void EnterHold()
     {
+        jumpFor = null;
         mode = Mode.Hold;
         napping = waking = false;
         lookIndex = null;
@@ -675,6 +977,7 @@ sealed class Pet
 
     void GoIdle(double minDelay = 2, double maxDelay = 6)
     {
+        jumpFor = null;
         if (holdClip is not null)
         {
             EnterHold();
