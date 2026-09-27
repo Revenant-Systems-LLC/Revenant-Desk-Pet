@@ -103,9 +103,12 @@ sealed class Pet
             Play(name);
             return;
         }
+        if (holdClip == name && mode == Mode.Hold)
+            return; // already doing it: don't restart the loop on every repeat
         holdClip = name;
         Log.Info($"state held: {name}");
-        if (mode is not (Mode.Held or Mode.Falling))
+        // While a one-off clip plays, let it finish; AfterAction enters the hold.
+        if (mode is not (Mode.Held or Mode.Falling or Mode.Action))
             EnterHold();
     }
 

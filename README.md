@@ -26,6 +26,43 @@ It needs the .NET 10 Desktop Runtime. Only one copy runs at a time.
 Only the idle animation is required; every other animation is optional and
 falls back to the closest one the pet has (see `Atlas.Clip`).
 
+## AI link: Claude Code drives the pet
+
+The pet listens on a local named pipe (`\\.\pipe\RevenantDeskPet-<windows user>`,
+current user only, no network). `revbot-hook.exe` (`src/RevBotHook`) is run by
+Claude Code hooks: it reads the hook event and forwards only the event name,
+session id, tool name and notification type (never prompts, paths, commands or
+output), prints nothing, and always exits 0, even when the pet isn't running.
+
+| Claude Code event | RevBot |
+|---|---|
+| you send a prompt | looks around (thinking it over) |
+| reading or searching tools | looks around |
+| editing, running commands, other tools | hammers away |
+| asking you a question, needing permission | hand up, waiting |
+| a tool fails | oops, then back to work |
+| three subagents at once | flexes |
+| done | celebrates, then idle |
+| Claude Code went quiet for 90 s (30 min while waiting on you) | stands down |
+
+Several sessions at once are tracked separately; the pet shows the most
+important state (waiting on you, then working, then looking around).
+
+Wire it up with async hooks in `~/.claude/settings.json`, one entry per event
+(`async` means Claude Code never waits for it):
+
+```json
+"UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"M:/Projects/Desktop-Pet/dist/revbot-hook.exe\"", "async": true, "timeout": 10 }] }]
+```
+
+Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
+`PostToolUse` (matcher `*`), `PostToolUseFailure`, `PermissionRequest`,
+`Notification`, `SubagentStart`, `SubagentStop`, `Stop`, `StopFailure`,
+`SessionEnd`.
+
+Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
+`"clear"`, `"ping"`.
+
 ## Controls
 
 | Input | What happens |

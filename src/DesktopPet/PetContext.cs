@@ -29,6 +29,23 @@ sealed class PetContext : ApplicationContext
     readonly List<(ToolStripMenuItem item, double size)> sizeItems = new();
     ToolStripMenuItem stayPutItem = null!;
 
+    // AI link: Claude Code hooks (via revbot-hook.exe) and direct commands
+    AiLink? aiLink;
+    /// <summary>What one Claude Code session is doing; the pet shows the most important across sessions.</summary>
+    sealed class AiSession
+    {
+        public string? Hold;
+        public double LastAt;
+        public int Subagents;
+    }
+    readonly Dictionary<string, AiSession> aiSessions = new();
+    bool aiHolding;              // the current held state was set by the AI link
+    double aiHoldChangedAt = double.NegativeInfinity;
+    string? pendingAiHold;       // waits out the minimum dwell before switching
+    const double AiQuietSeconds = 90;          // a session silent this long has gone away
+    const double AiWaitingQuietSeconds = 1800; // but a pending permission prompt can wait a long time
+    const double AiMinDwellSeconds = 1.2;      // stop rapid tool calls flickering between animations
+
     Dictionary<(string Row, int Index), Sprite> sprites = new();
     double scale = -1;
     IntPtr monitor;
@@ -80,6 +97,15 @@ sealed class PetContext : ApplicationContext
         else
             pet.Play("wave");
 
+        try
+        {
+            aiLink = new AiLink(OnAiLine);
+        }
+        catch (Exception ex)
+        {
+            Log.Error("ai link start", ex); // the pet works without it
+        }
+
         timer.Tick += OnTick;
         timer.Start();
     }
@@ -125,6 +151,7 @@ sealed class PetContext : ApplicationContext
 
             Native.GetCursorPos(out var cursor);
             demo?.Tick(t);
+            TickAiLink(t);
             pet.Tick(dt, cursor.X, cursor.Y, Native.IdleMilliseconds());
             Render();
             savedX = (int)Math.Round(pet.X);
@@ -155,6 +182,213 @@ sealed class PetContext : ApplicationContext
         lastSprite = null;
         surface.Invalidate();
     }
+
+    // ------------------------------------------------------------ AI link
+
+    /// <summary>
+    /// One line from the AI link, on the UI thread. Hook lines look like
+    /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
+    /// direct commands are "state NAME", "play NAME", "clear" and "ping".
+    /// </summary>
+    void OnAiLine(string line)
+    {
+        if (quitting)
+            return;
+        var parts = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+            return;
+        string verb = parts[0].ToLowerInvariant();
+        string? arg = parts.Length > 1 ? parts[1] : null;
+        var kv = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in parts.Skip(1))
+        {
+            int eq = p.IndexOf('=');
+            if (eq > 0)
+                kv[p[..eq]] = p[(eq + 1)..]; // last one wins; duplicates must not throw
+        }
+
+        switch (verb)
+        {
+            case "hook" when arg is not null:
+                OnHook(arg, kv.GetValueOrDefault("session") ?? "unknown", kv.GetValueOrDefault("tool"), kv.GetValueOrDefault("type"));
+                break;
+            case "state" when arg is not null:
+                SessionHold("direct", arg);
+                ApplyAiHold(immediate: true);
+                break;
+            case "play" when arg is not null:
+                pet.Play(arg);
+                break;
+            case "clear":
+                aiSessions.Clear();
+                ApplyAiHold(immediate: true);
+                break;
+            case "ping":
+                Log.Info("ai link ping");
+                break;
+            default:
+                Log.Info($"ai link: ignored '{Trim(line)}'");
+                break;
+        }
+    }
+
+    void OnHook(string hookEvent, string session, string? tool, string? type)
+    {
+        bool immediate = true;
+        switch (hookEvent)
+        {
+            case "SessionStart":
+                pet.Play("wave");
+                return;
+            case "UserPromptSubmit":
+                SessionHold(session, "review");            // reading what you asked, thinking it over
+                break;
+            case "PreToolUse":
+                SessionHold(session, StateForTool(tool ?? ""));
+                immediate = false;
+                break;
+            case "PostToolUse":
+                // after you approve a permission the tool runs: put the hand down
+                if (aiSessions.TryGetValue(session, out var current) && current.Hold == "waiting")
+                    SessionHold(session, StateForTool(tool ?? ""));
+                else
+                    Touch(session);
+                immediate = false;
+                break;
+            case "PostToolUseFailure":
+                Touch(session);
+                pet.Play("failed");                        // oops; the held state resumes after
+                break;
+            case "PermissionRequest":
+                SessionHold(session, "waiting");           // hand up: needs your OK
+                break;
+            case "Notification" when type == "permission_prompt":
+                SessionHold(session, "waiting");
+                break;
+            case "Notification" when type == "idle_prompt":
+                aiSessions.Remove(session);
+                ApplyAiHold(immediate: true);
+                pet.Play("wave");                          // your turn
+                return;
+            case "SubagentStart":
+            {
+                var st = Session(session);
+                st.Subagents++;
+                st.Hold ??= "working";
+                if (aiSessions.Values.Sum(x => x.Subagents) == 3)
+                    pet.Play("flex");                      // a crowd of agents: power up
+                immediate = false;
+                break;
+            }
+            case "SubagentStop":
+            {
+                var st = Session(session);
+                st.Subagents = Math.Max(0, st.Subagents - 1);
+                break;
+            }
+            case "Stop":
+                aiSessions.Remove(session);
+                ApplyAiHold(immediate: true);
+                pet.Play("happy");                         // done (falls back to a jump); others' state resumes after
+                return;
+            case "StopFailure":
+                aiSessions.Remove(session);
+                ApplyAiHold(immediate: true);
+                pet.Play("failed");
+                return;
+            case "SessionEnd":
+                aiSessions.Remove(session);
+                break;
+            default:
+                Log.Info($"ai link: no reaction for {Trim(hookEvent)}");
+                return;
+        }
+        ApplyAiHold(immediate);
+    }
+
+    AiSession Session(string id)
+    {
+        if (!aiSessions.TryGetValue(id, out var s))
+            aiSessions[id] = s = new AiSession();
+        s.LastAt = clock.Elapsed.TotalSeconds;
+        return s;
+    }
+
+    void Touch(string id) => Session(id);
+
+    void SessionHold(string id, string state) => Session(id).Hold = state;
+
+    /// <summary>Reading and searching look around; asking waits; everything else is hands-on work.</summary>
+    static string StateForTool(string tool)
+    {
+        if (tool is "AskUserQuestion" or "ExitPlanMode")
+            return "waiting";
+        string t = tool.ToLowerInvariant();
+        string[] looking = ["read", "grep", "glob", "search", "fetch", "find", "list", "get", "query", "view", "screenshot", "snapshot"];
+        return looking.Any(t.Contains) ? "review" : "working";
+    }
+
+    /// <summary>The state to show across all sessions: needing you beats working beats looking around.</summary>
+    string? AggregateHold()
+    {
+        static int Rank(string? h) => h switch { "waiting" => 3, "working" => 2, null => 0, _ => 1 };
+        return aiSessions.Values.Select(s => s.Hold).OrderByDescending(Rank).FirstOrDefault();
+    }
+
+    void ApplyAiHold(bool immediate)
+    {
+        string? state = AggregateHold();
+        double now = clock.Elapsed.TotalSeconds;
+        if (state is null)
+        {
+            pendingAiHold = null;
+            if (aiHolding)
+                pet.SetState(null);
+            aiHolding = false;
+            return;
+        }
+        if (aiHolding && pet.HeldState == state)
+        {
+            pendingAiHold = null;
+            return;
+        }
+        if (!immediate && aiHolding && now - aiHoldChangedAt < AiMinDwellSeconds)
+        {
+            pendingAiHold = state; // applied by TickAiLink once the dwell is over
+            return;
+        }
+        pendingAiHold = null;
+        aiHolding = true;
+        aiHoldChangedAt = now;
+        pet.SetState(state);
+    }
+
+    void TickAiLink(double t)
+    {
+        // Cleared from the menu (or anything else): respect it, and drop what was queued.
+        if (aiHolding && pet.HeldState is null)
+        {
+            aiHolding = false;
+            pendingAiHold = null;
+            aiSessions.Clear();
+            return;
+        }
+        // Sessions that went quiet (Claude Code closed or crashed) stand down.
+        var gone = aiSessions
+            .Where(kv => t - kv.Value.LastAt > (kv.Value.Hold == "waiting" ? AiWaitingQuietSeconds : AiQuietSeconds))
+            .Select(kv => kv.Key).ToList();
+        if (gone.Count > 0)
+        {
+            foreach (var id in gone)
+                aiSessions.Remove(id);
+            Log.Info($"ai link: {gone.Count} quiet session(s) stood down");
+            ApplyAiHold(immediate: true);
+        }
+        if (pendingAiHold is not null && t - aiHoldChangedAt >= AiMinDwellSeconds)
+            ApplyAiHold(immediate: true);
+    }
+
+    static string Trim(string s) => s.Length > 60 ? s[..60] : s;
 
     // ------------------------------------------------------------ monitors
 
@@ -539,6 +773,7 @@ sealed class PetContext : ApplicationContext
             window.Close();
             window.Dispose();
         }
+        aiLink?.Dispose();
         surface.Dispose();
         atlas.Dispose();
         ExitThread();
