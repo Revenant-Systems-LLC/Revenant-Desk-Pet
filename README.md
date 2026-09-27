@@ -77,7 +77,11 @@ see, positions only), `"clear"`, `"ping"`.
 | Tray icon double-click | "come here": drops it onto the middle of the main monitor |
 
 With nothing to do it walks, fidgets, and follows the cursor with its head
-when the cursor gets close. After 5 minutes with no keyboard or mouse input it
+when the cursor gets close. While you type into a terminal or Claude it stops
+wandering and turns to watch that window, and carries on a few seconds after
+you stop. It only knows that a key was pressed (input happened while the mouse
+stayed still) and which program is in front; it never reads the keys, and
+logs only "watching you type" on and off. After 5 minutes with no keyboard or mouse input it
 falls asleep, and it wakes up when you come back.
 
 ## Files it writes

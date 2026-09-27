@@ -112,6 +112,11 @@ sealed class Pet
     public ITerrain? Terrain { get; set; }
     /// <summary>Going after the mouse cursor.</summary>
     public bool Chasing { get; private set; }
+    /// <summary>
+    /// Where you're typing (a point on screen), while you type into a
+    /// terminal or Claude; null otherwise. He stops wandering and watches it.
+    /// </summary>
+    public (double X, double Y)? Attention { get; set; }
     public double AnchorY => mode == Mode.Held ? Math.Min(dragAy, GroundY) : GroundY - Lift;
     public string? HeldState => holdClip;
     public (string Row, int Index) Frame { get; private set; } = ("idle", 0);
@@ -412,6 +417,11 @@ sealed class Pet
             PlayClip("idle"); // fidget finished
         if (Demo || Chasing)
             return;
+        if (Attention is not null)
+        {
+            nextDecision = Math.Max(nextDecision, now + 2); // stay and watch
+            return;
+        }
         if (now >= nextDecision)
         {
             Decide();
@@ -1017,6 +1027,17 @@ sealed class Pet
 
     void UpdateWatch(int cx, int cy)
     {
+        if (Attention is (double ax, double ay) && !Chasing)
+        {
+            // watching you type: look toward it, however far away it is
+            if (mode != Mode.Idle || !atlas.HasLook)
+            {
+                lookIndex = null;
+                return;
+            }
+            lookIndex = LookToward(ax - X, ay - (AnchorY - HeadHeight * Scale));
+            return;
+        }
         double dx = cx - X, dy = cy - (AnchorY - HeadHeight * Scale);
         double d = Math.Sqrt(dx * dx + dy * dy);
         if (d >= WatchRadius * Scale)
@@ -1047,10 +1068,15 @@ sealed class Pet
             lookIndex = null; // right on top of it (or no look frames): face forward
             return;
         }
+        lookIndex = LookToward(dx, dy);
+    }
+
+    static int LookToward(double dx, double dy)
+    {
         double angle = Math.Atan2(dx, -dy) * 180 / Math.PI; // clockwise from up
         if (angle < 0)
             angle += 360;
-        lookIndex = (int)Math.Round(angle / (360.0 / Atlas.LookDirections)) % Atlas.LookDirections;
+        return (int)Math.Round(angle / (360.0 / Atlas.LookDirections)) % Atlas.LookDirections;
     }
 
     // ------------------------------------------------------------ helpers

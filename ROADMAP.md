@@ -32,6 +32,9 @@ only in the separate kid's edition (Desk-Pet-Maker).
 - **"Listening while you type":** no hook fires on keystrokes, but the pet can
   combine "time since last input" (never which keys) with "Claude or a
   terminal is the active window" to perk up while you type.
+  Built 2026-09-27 (branch feature/listening): he stops wandering and looks
+  toward the window you're typing in (terminals, Windows Terminal, Claude,
+  VS Code, Cursor), until 2.5 s after the last keystroke.
 
 ## 3. Detachable arm
 

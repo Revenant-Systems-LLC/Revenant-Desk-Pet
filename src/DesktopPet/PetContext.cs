@@ -64,6 +64,18 @@ sealed class PetContext : ApplicationContext
     double nextTerrainAt;
     ToolStripMenuItem terrainItem = null!;
     ToolStripMenuItem chaseItem = null!;
+
+    // Watching you type: only "a key was pressed recently" (the cursor didn't
+    // move, yet there was input) and which program is in front. Never which keys.
+    static readonly HashSet<string> TypingApps = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "WindowsTerminal", "OpenConsole", "conhost", "cmd", "pwsh", "powershell", "wezterm-gui", "alacritty", "mintty",
+        "claude", "Claude", "Code", "Cursor",
+    };
+    double nextTypingCheckAt, typingUntil;
+    Native.POINT lastTypingCursor;
+    uint foregroundPid;
+    bool foregroundIsTypingApp, watchingTyping;
     int lastX, lastY;
 
     /// <param name="atlas">The pet to show; the context owns and disposes it.</param>
@@ -171,6 +183,11 @@ sealed class PetContext : ApplicationContext
             }
 
             Native.GetCursorPos(out var cursor);
+            if (t >= nextTypingCheckAt)
+            {
+                nextTypingCheckAt = t + 0.25;
+                CheckTyping(t, cursor);
+            }
             demo?.Tick(t);
             TickAiLink(t);
             pet.Tick(dt, cursor.X, cursor.Y, Native.IdleMilliseconds());
@@ -458,6 +475,53 @@ sealed class PetContext : ApplicationContext
         }
         pet.X = x;
         pet.SetWork(work);
+    }
+
+    /// <summary>
+    /// Typing into a terminal or Claude right now? Then point the pet at that
+    /// window. A keystroke is inferred from "recent input, but the mouse didn't
+    /// move"; what was typed is never read.
+    /// </summary>
+    void CheckTyping(double t, Native.POINT cursor)
+    {
+        bool mouseStill = cursor.X == lastTypingCursor.X && cursor.Y == lastTypingCursor.Y;
+        lastTypingCursor = cursor;
+        IntPtr fg = Native.GetForegroundWindow();
+        if (fg != IntPtr.Zero && fg != window.Handle)
+        {
+            Native.GetWindowThreadProcessId(fg, out uint pid);
+            if (pid != foregroundPid)
+            {
+                foregroundPid = pid;
+                foregroundIsTypingApp = TypingApps.Contains(ProcessName(pid));
+            }
+        }
+        else
+            foregroundIsTypingApp = false;
+
+        if (foregroundIsTypingApp && mouseStill && Native.IdleMilliseconds() < 400)
+            typingUntil = t + 2.5; // keeps watching a little after the last keystroke
+        Native.RECT r = default;
+        bool watching = foregroundIsTypingApp && t < typingUntil && Native.GetWindowRect(fg, out r);
+        pet.Attention = watching ? ((r.Left + r.Right) / 2.0, r.Bottom - 80) : null; // input boxes sit near the bottom
+        if (watching != watchingTyping)
+        {
+            watchingTyping = watching;
+            Log.Info(watching ? "watching you type" : "stopped watching");
+        }
+    }
+
+    static string ProcessName(uint pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById((int)pid);
+            return p.ProcessName;
+        }
+        catch
+        {
+            return "";
+        }
     }
 
     void RefreshMonitor(bool force)
