@@ -273,6 +273,54 @@ sealed class Atlas : IDisposable
         return new Sprite { W = s.W, H = s.H, X0 = -(s.X0 + s.W), Y0 = s.Y0, Px = px };
     }
 
+    /// <summary>
+    /// A sprite squashed or stretched (sx, sy) and tilted (degrees, clockwise)
+    /// about its anchor, the ground point under the pet. Used for a few frames
+    /// at a time (landings, dizziness), so it is made on the fly.
+    /// </summary>
+    public static Sprite Posed(Sprite s, double sx, double sy, double degrees)
+    {
+        using var m = new Matrix();
+        m.Rotate((float)degrees);
+        m.Scale((float)sx, (float)sy); // prepended: scale first, then rotate
+        var corners = new[] { new PointF(s.X0, s.Y0), new PointF(s.X0 + s.W, s.Y0), new PointF(s.X0, s.Y0 + s.H), new PointF(s.X0 + s.W, s.Y0 + s.H) };
+        m.TransformPoints(corners);
+        int x0 = (int)Math.Floor(corners.Min(p => p.X)) - 1, y0 = (int)Math.Floor(corners.Min(p => p.Y)) - 1;
+        int w = (int)Math.Ceiling(corners.Max(p => p.X)) + 1 - x0, h = (int)Math.Ceiling(corners.Max(p => p.Y)) + 1 - y0;
+
+        using var src = new Bitmap(s.W, s.H, PixelFormat.Format32bppPArgb);
+        var sd = src.LockBits(new Rectangle(0, 0, s.W, s.H), ImageLockMode.WriteOnly, PixelFormat.Format32bppPArgb);
+        try
+        {
+            for (int r = 0; r < s.H; r++)
+                Marshal.Copy(s.Px, r * s.W * 4, sd.Scan0 + r * sd.Stride, s.W * 4);
+        }
+        finally
+        {
+            src.UnlockBits(sd);
+        }
+
+        using var dst = new Bitmap(w, h, PixelFormat.Format32bppPArgb);
+        using (var g = Graphics.FromImage(dst))
+        {
+            g.Clear(Color.Transparent);
+            g.InterpolationMode = InterpolationMode.Bilinear;
+            g.PixelOffsetMode = PixelOffsetMode.Half;
+            g.TranslateTransform(-x0, -y0);
+            g.MultiplyTransform(m); // prepended: pose about the anchor, then shift into the bitmap
+            g.DrawImage(src, s.X0, s.Y0, s.W, s.H);
+        }
+        var dd = dst.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppPArgb);
+        try
+        {
+            return new Sprite { W = w, H = h, X0 = x0, Y0 = y0, Px = ReadPixels(dd, w, h) };
+        }
+        finally
+        {
+            dst.UnlockBits(dd);
+        }
+    }
+
     static byte[] ReadPixels(BitmapData data, int w, int h)
     {
         var px = new byte[w * h * 4];

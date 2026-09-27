@@ -70,6 +70,7 @@ Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
 |---|---|
 | Left click | a random reaction (jump, wave, shrug, sometimes a mech move) |
 | Left drag | pick it up; let go to drop it (big drops end in a fall-apart). Throw it hard at a side where another monitor sits and it flies onto that screen, if it is high enough to clear that screen's floor |
+| Shake it while holding it | four quick swings back and forth: when you let go and it lands, it's dizzy and wobbles for a few seconds |
 | Right click, or the tray icon | menu: actions, held states, size, pet, stay put, come here, exit |
 | Tray icon double-click | "come here": drops it onto the middle of the main monitor |
 
@@ -107,6 +108,12 @@ like a Claude Code hook can call it.
 Two pets are built in: RevBot and Damien (the red devil ball). Pick one from
 the "Pet" menu; the choice is saved. Damien's atlas is built from his sheet by
 `python toolsuild_codex_pet.py damien`.
+
+Landings squash RevBot down and spring him back, harder the further he fell,
+and shaking him makes him dizzy. Both are code-made (a squash/stretch and a
+tilt of his existing frames) until "hard landing" and "dizzy" clips are drawn;
+a drawn "dizzy" clip replaces the idle frames under the wobble. Floating pets
+get neither: their motion is drawn, not faked.
 
 Damien floats (`"floats": true` in his atlas): he hovers a little above the
 floor with a slow bob, drifts instead of walking (his idle frames, never the

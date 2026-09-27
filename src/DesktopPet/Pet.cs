@@ -32,6 +32,11 @@ sealed class Pet
     const double FloatSpeed = 55;       // px/s drifting
     const double FloatDrag = 2.2;       // 1/s; a throw slows down this fast
     const double FlipSpeed = 350;       // px/s; thrown at least this fast plays "thrown" (flip and squish)
+    // Code-made squash and wobble, for walking pets only (Damien's motion is Dave's to draw).
+    const double SquashSeconds = 0.45;  // a landing squashes, rebounds and settles in this long
+    const double SquashDrop = 500;      // px; a drop this high squashes the most
+    const double DizzySeconds = 3.2;    // shaken, then let go: wobbles this long
+    const double DizzyTilt = 10;        // degrees either way
     const double NapSeconds = 120;
 
     Atlas atlas;
@@ -49,6 +54,8 @@ sealed class Pet
     int? lookIndex, forcedLook;
     bool cursorNear, waking, napping;
     double cursorFarSince, lastGreet = double.NegativeInfinity, napUntil;
+    double landAt = double.NegativeInfinity, landImpact, dizzyAt;
+    bool dizzyPending;
     Native.RECT work;
 
     public Pet(Atlas atlas)
@@ -87,6 +94,8 @@ sealed class Pet
     public double AnchorY => mode == Mode.Held ? Math.Min(dragAy, GroundY) : GroundY - Lift;
     public string? HeldState => holdClip;
     public (string Row, int Index) Frame { get; private set; } = ("idle", 0);
+    /// <summary>Squash/stretch and tilt (degrees) about the anchor, for landings and dizziness; (1, 1, 0) most of the time.</summary>
+    public (double Sx, double Sy, double Degrees) Pose { get; private set; } = (1, 1, 0);
     /// <summary>The monitor containing a screen point (its bounds and work area), or null if no monitor is there. Lets a throw carry on to the next screen.</summary>
     public Func<double, double, (Native.RECT Bounds, Native.RECT Work)?>? MonitorAt { get; set; }
 
@@ -146,7 +155,7 @@ sealed class Pet
                 return;
             case Mode.Held or Mode.Falling:
                 return;
-            case Mode.Action when requested is "evolve" or "flex" or "leap" or "failed":
+            case Mode.Action when requested is "evolve" or "flex" or "leap" or "failed" or "dizzy":
                 return; // let the big ones finish
         }
         var reactions = new[] { ("jump", 40.0), ("wave", 30.0), ("happy", 20.0), ("shrug", 12.0), ("flex", 10.0), ("leap", 5.0), ("evolve", 3.0) }
@@ -171,12 +180,20 @@ sealed class Pet
         WalkTo(Math.Clamp(X + dx * Scale, work.Left + m, Math.Max(work.Left + m, work.Right - m)));
     }
 
+    /// <summary>Shaken hard while being held: dizzy once let go and at rest.</summary>
+    public void Shaken()
+    {
+        if (mode == Mode.Held)
+            dizzyPending = true;
+    }
+
     /// <summary>Force a look direction (0..15, clockwise from up), or null to follow the cursor.</summary>
     public void ForceLook(int? index) => forcedLook = index is int i ? ((i % Atlas.LookDirections) + Atlas.LookDirections) % Atlas.LookDirections : null;
 
     public void BeginDrag()
     {
         mode = Mode.Held;
+        dizzyPending = false;
         napping = waking = false;
         lookIndex = null;
         PlayClip("held");
@@ -285,6 +302,8 @@ sealed class Pet
         if (Floats && mode is not (Mode.Held or Mode.Falling))
             Lift += (HoverLift - Lift) * (1 - Math.Exp(-8 * dt)); // follow the bob closely, never jump
         UpdateWatch(cursorX, cursorY);
+
+        Pose = CurrentPose();
 
         int? look = atlas.HasLook ? forcedLook ?? lookIndex : null;
         Frame = mode == Mode.Idle && clip.Name == "idle" && look is int li
@@ -461,7 +480,11 @@ sealed class Pet
         {
             vx = vy = 0;
             Log.Info("settled");
-            GoIdle(1.5, 4);
+            if (dizzyPending && atlas.Has("dizzy"))
+                StartDizzy(); // only if drawn: no code-made wobble for a floating pet
+            else
+                GoIdle(1.5, 4);
+            dizzyPending = false;
         }
     }
 
@@ -514,7 +537,39 @@ sealed class Pet
     {
         vx = vy = 0;
         Log.Info($"landed after {height:0}px");
-        StartAction(height > HardFall * Scale ? "failed" : "land");
+        if (height > 20 * Scale)
+        {
+            landAt = now;
+            landImpact = Math.Clamp(height / (SquashDrop * Scale), 0.2, 1);
+        }
+        if (dizzyPending)
+            StartDizzy();
+        else
+            StartAction(height > HardFall * Scale ? "failed" : "land");
+        dizzyPending = false;
+    }
+
+    void StartDizzy() => StartAction("dizzy", DizzySeconds); // plays idle until a "dizzy" clip is drawn
+
+    (double, double, double) CurrentPose()
+    {
+        if (Floats)
+            return (1, 1, 0);
+        double sx = 1, sy = 1, deg = 0;
+        double tl = now - landAt;
+        if (tl < SquashSeconds)
+        {
+            // squash down, spring back a little past normal, settle
+            double k = landImpact * 0.3 * Math.Exp(-tl / 0.12) * Math.Cos(2 * Math.PI * tl / 0.3);
+            sy = 1 - k;
+            sx = 1 + 0.6 * k;
+        }
+        if (mode == Mode.Action && requested == "dizzy")
+        {
+            double td = now - dizzyAt;
+            deg = DizzyTilt * Math.Sin(2 * Math.PI * 1.4 * td) * Math.Max(0, 1 - td / DizzySeconds);
+        }
+        return (sx, sy, deg);
     }
 
     void TickSleep(uint idleMs)
@@ -593,6 +648,8 @@ sealed class Pet
 
     void StartAction(string name, double? loopSeconds = null)
     {
+        if (name == "dizzy")
+            dizzyAt = now;
         mode = Mode.Action;
         lookIndex = null;
         PlayClip(name);

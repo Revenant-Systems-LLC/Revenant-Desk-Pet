@@ -177,6 +177,9 @@ sealed class PetContext : ApplicationContext
     {
         if (!sprites.TryGetValue(pet.Frame, out var s))
             return;
+        var (sx, sy, deg) = pet.Pose;
+        if (sx != 1 || sy != 1 || deg != 0)
+            s = Atlas.Posed(s, sx, sy, deg);
         int x = (int)Math.Round(pet.X) + s.X0;
         int y = (int)Math.Round(pet.AnchorY) + s.Y0;
         if (ReferenceEquals(s, lastSprite) && x == lastX && y == lastY)
@@ -559,7 +562,14 @@ sealed class PetContext : ApplicationContext
                 return;
             dragging = true;
             pet.BeginDrag();
+            shakeTimesX.Clear();
+            shakeTimesY.Clear();
+            shakeDirX = shakeDirY = 0;
+            shakeRunX = shakeRunY = 0;
+            shakeLastX = c.X;
+            shakeLastY = c.Y;
         }
+        TrackShake(clock.Elapsed.TotalSeconds, c.X, c.Y);
         double t = clock.Elapsed.TotalSeconds;
         dragTrail.Enqueue((t, c.X, c.Y));
         while (dragTrail.Count > 2 && t - dragTrail.Peek().t > 0.12)
@@ -571,6 +581,45 @@ sealed class PetContext : ApplicationContext
             RefreshMonitor(force: false);
         }
         Render();
+    }
+
+    // Shaking while held: quick back-and-forth swings along one axis, each at least ~30 px, four within a second.
+    readonly Queue<double> shakeTimesX = new(), shakeTimesY = new();
+    int shakeDirX, shakeDirY, shakeLastX, shakeLastY;
+    double shakeRunX, shakeRunY;
+
+    void TrackShake(double t, int x, int y)
+    {
+        int dx = x - shakeLastX, dy = y - shakeLastY;
+        shakeLastX = x;
+        shakeLastY = y;
+        CountSwing(shakeTimesX, ref shakeDirX, ref shakeRunX, dx, t);
+        CountSwing(shakeTimesY, ref shakeDirY, ref shakeRunY, dy, t);
+        if (shakeTimesX.Count >= 4 || shakeTimesY.Count >= 4)
+        {
+            shakeTimesX.Clear();
+            shakeTimesY.Clear();
+            pet.Shaken();
+            Log.Info("shaken");
+        }
+    }
+
+    void CountSwing(Queue<double> swings, ref int dir, ref double run, int d, double t)
+    {
+        while (swings.Count > 0 && t - swings.Peek() > 1.0)
+            swings.Dequeue();
+        if (d == 0)
+            return;
+        int sign = Math.Sign(d);
+        if (sign == dir)
+        {
+            run += Math.Abs(d);
+            return;
+        }
+        if (dir != 0 && run >= 30 * scale)
+            swings.Enqueue(t); // a full swing one way, now turning back
+        dir = sign;
+        run = Math.Abs(d);
     }
 
     void OnMouseUp(object? sender, MouseEventArgs e)

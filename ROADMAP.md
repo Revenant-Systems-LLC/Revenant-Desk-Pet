@@ -96,6 +96,11 @@ only in the separate kid's edition (Desk-Pet-Maker).
   (fast back-and-forth changes of direction in the drag path); when you let
   go he is dizzy: wobbling, swirly eyes, stumbling for a few seconds. Needs a
   "dizzy" clip.
+- Built 2026-09-27 (branch feature/landing-and-dizzy), code-made until the
+  art exists: every landing squashes and springs back, scaled by drop height
+  (a hard one still plays the arm-off "failed" clip); four quick swings while
+  held make him dizzy when he lands (wobbling tilt for about 3 s, over his
+  idle frames or a future "dizzy" clip). Not applied to Damien.
 - The arm popping off stays as the extreme end of a hard landing.
 - **Sit on the taskbar.** Now and then he sits down on the top edge of the
   taskbar with his legs hanging over it, swinging his feet, then hops back
