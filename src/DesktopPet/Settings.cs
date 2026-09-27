@@ -9,6 +9,8 @@ sealed class Settings
     public bool StayPut { get; set; }
     public int? X { get; set; }
     public int? Y { get; set; }
+    /// <summary>Which built-in pet to show ("revbot", "damien").</summary>
+    public string Pet { get; set; } = "revbot";
 
     static string FilePath => Path.Combine(AppContext.BaseDirectory, "settings.json");
 
@@ -22,6 +24,8 @@ sealed class Settings
                 if (!double.IsFinite(s.Size))
                     s.Size = 1.0;
                 s.Size = Math.Clamp(s.Size, 0.5, 2.0);
+                if (!Atlas.IsBuiltIn(s.Pet))
+                    s.Pet = "revbot";
                 return s;
             }
         }

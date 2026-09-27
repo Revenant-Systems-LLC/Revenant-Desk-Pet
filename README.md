@@ -61,7 +61,7 @@ Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
 `SessionEnd`.
 
 Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
-`"clear"`, `"ping"`.
+`"pet damien"`, `"clear"`, `"ping"`.
 
 ## Controls
 
@@ -69,7 +69,7 @@ Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
 |---|---|
 | Left click | a random reaction (jump, wave, shrug, sometimes a mech move) |
 | Left drag | pick it up; let go to drop it (big drops end in a fall-apart) |
-| Right click, or the tray icon | menu: actions, held states, size, stay put, come here, exit |
+| Right click, or the tray icon | menu: actions, held states, size, pet, stay put, come here, exit |
 | Tray icon double-click | "come here": drops it onto the middle of the main monitor |
 
 With nothing to do it walks, fidgets, and follows the cursor with its head
@@ -80,7 +80,7 @@ falls asleep, and it wakes up when you come back.
 
 Both go next to the exe, never anywhere else:
 
-- `settings.json`: size, stay-put, last position
+- `settings.json`: size, stay-put, last position, which pet
 - `logs\pet.log`: state changes and errors, capped at two 1 MB files
 
 ## The AI hookup (later)
@@ -100,6 +100,12 @@ The "Hold a state" menu drives the same call, so the states can be previewed
 now. The missing piece is a channel into the running process (a named pipe or
 a `--state working` argument forwarded to the running copy) so that something
 like a Claude Code hook can call it.
+
+## Pets
+
+Two pets are built in: RevBot and Damien (the red devil ball). Pick one from
+the "Pet" menu; the choice is saved. Damien's atlas is built from his sheet by
+`python toolsuild_codex_pet.py damien`.
 
 ## Art pipeline
 

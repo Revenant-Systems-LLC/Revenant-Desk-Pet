@@ -33,8 +33,31 @@ static class Program
         Log.Info($"start {typeof(Program).Assembly.GetName().Version} demo={demo}");
         try
         {
-            var atlas = Atlas.Load();
-            Application.Run(new PetContext(atlas, LoadTrayIcon(), demo));
+            string pet = Settings.Load().Pet;
+            Atlas atlas;
+            Icon icon;
+            try
+            {
+                atlas = Atlas.Load(pet);
+                try
+                {
+                    icon = Atlas.LoadIcon(pet, SystemInformation.SmallIconSize);
+                }
+                catch
+                {
+                    atlas.Dispose();
+                    throw;
+                }
+            }
+            catch (Exception ex) when (pet != "revbot")
+            {
+                // The saved choice stays as it is; RevBot stands in for this run.
+                Log.Error($"pet '{pet}' failed to load, using RevBot", ex);
+                pet = "revbot";
+                atlas = Atlas.Load(pet);
+                icon = Atlas.LoadIcon(pet, SystemInformation.SmallIconSize);
+            }
+            Application.Run(new PetContext(atlas, icon, demo, petId: pet));
         }
         catch (Exception ex)
         {
@@ -45,27 +68,24 @@ static class Program
         return 0;
     }
 
-    static Icon LoadTrayIcon()
-    {
-        using var stream = typeof(Program).Assembly.GetManifestResourceStream("pet.ico")
-            ?? throw new InvalidDataException("pet.ico is not embedded");
-        return new Icon(stream, SystemInformation.SmallIconSize);
-    }
-
     static int SelfTest()
     {
         Log.Init();
         try
         {
-            using var atlas = Atlas.Load();
-            foreach (double scale in new[] { 0.5, 0.625, 0.75, 0.8333, 1.0, 1.25, 1.5, 2.0 })
+            foreach (var (id, name) in Atlas.BuiltInPets)
             {
-                var sprites = atlas.Build(scale * atlas.BaseScale);
-                if (sprites.Values.Any(s => s.W <= 0 || s.H <= 0 || s.Px.Length != s.W * s.H * 4))
-                    throw new InvalidDataException($"bad sprite at scale {scale}");
+                using var atlas = Atlas.Load(id);
+                Atlas.LoadIcon(id, new Size(16, 16)).Dispose();
+                foreach (double scale in new[] { 0.5, 0.625, 0.75, 0.8333, 1.0, 1.25, 1.5, 2.0 })
+                {
+                    var sprites = atlas.Build(scale * atlas.BaseScale);
+                    if (sprites.Values.Any(s => s.W <= 0 || s.H <= 0 || s.Px.Length != s.W * s.H * 4))
+                        throw new InvalidDataException($"{name}: bad sprite at scale {scale}");
+                }
+                var resolved = AllClipNames.Select(n => $"{n}->{atlas.Clip(n).Name}{(atlas.Has(n) ? "" : "*")}");
+                Log.Info($"selftest ok: {name} look={atlas.HasLook} base={atlas.BaseScale} clips: {string.Join(' ', resolved)}");
             }
-            var resolved = AllClipNames.Select(n => $"{n}->{atlas.Clip(n).Name}{(atlas.Has(n) ? "" : "*")}");
-            Log.Info($"selftest ok: look={atlas.HasLook} base={atlas.BaseScale} clips: {string.Join(' ', resolved)}");
             return 0;
         }
         catch (Exception ex)

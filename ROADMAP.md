@@ -57,8 +57,16 @@ only in the separate kid's edition (Desk-Pet-Maker).
 
 ## 5. Interacting with the desktop ("Animator vs. Animation")
 
+- **The desktop is a 2D side-scroller** (Dave, 2026-09-27). The taskbar is the
+  ground. Desktop icons are platforms he can climb onto. Open windows are
+  terrain he can climb up and mess around on. He should be able to climb on
+  everything.
 - He reacts to what is behind him: climbs up window edges and desktop icons
   like walls, stands on title bars, peeks around corners.
+- Maybe, now and then, he grabs a window's scrollbar just to mess with you,
+  without damaging anything. Mechanics to be talked through with Dave first;
+  it would be the one exception to "pretend only" below, so nothing gets
+  built for it until he decides.
 - **Strictly pretend.** He never clicks, moves, closes, deletes or changes
   anything. He only reads where windows and icons are.
 - Notes: window rectangles from EnumWindows plus DWM extended frame bounds;
@@ -116,6 +124,22 @@ only in the separate kid's edition (Desk-Pet-Maker).
   recoloured instead of regenerated (untested, about 60% it looks right).
 - The cutting tools are in `tools/` (`video_frames.py`, `remove_mouth.py`,
   `fix_antenna.py`).
+
+## 11. Damien
+
+- Second built-in pet (the red devil ball), picked from the "Pet" menu.
+- **He floats; he has no legs.** Same 2D-side-scroll desktop as RevBot, but he
+  drifts over it instead of walking and climbing.
+- Thrown or dropped: no gravity. He slides through the air, slows to a stop,
+  then eases back to his hover height.
+- No squash-and-hop (the old "running" rows) while he drifts. Flips and spins
+  from his art folder belong in there instead.
+- Most of the time he has no mouth; the smile and the toothy grin are for
+  moments.
+- **Animating him is Dave's own job.** Code picks and times only frames Dave
+  drew, in the order he numbered them; no invented frames. His wave (tail
+  wiggle) was pulled 2026-09-27: its motion scribbles looked wrong and it
+  needs redoing.
 
 ## Already built
 

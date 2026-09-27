@@ -64,7 +64,8 @@ sealed class Atlas : IDisposable
     {
         ["wave"] = ["happy", "jump"],
         ["happy"] = ["jump", "wave"],
-        ["shrug"] = ["think"],
+        ["think"] = ["review"],
+        ["shrug"] = ["think", "review"],
         ["waiting"] = ["think"],
         ["review"] = ["think"],
         ["working"] = ["think"],
@@ -106,20 +107,44 @@ sealed class Atlas : IDisposable
         return manifest.Clips["idle"];
     }
 
-    /// <summary>The RevBot sheet built by tools/build_atlas.py and embedded in the exe.</summary>
-    public static Atlas Load()
+    /// <summary>The pets built into the exe: id -> name shown in the menu.</summary>
+    public static readonly (string Id, string Name)[] BuiltInPets = [("revbot", "RevBot"), ("damien", "Damien")];
+
+    public static bool IsBuiltIn(string? pet) => BuiltInPets.Any(p => p.Id == pet);
+
+    // RevBot keeps the original resource names; other pets are "<id>.atlas.png" etc.
+    static string Resource(string pet, string kind) => pet == "revbot"
+        ? kind switch { "png" => "atlas.png", "json" => "atlas.json", _ => "pet.ico" }
+        : kind switch { "png" => $"{pet}.atlas.png", "json" => $"{pet}.atlas.json", _ => $"{pet}.ico" };
+
+    /// <summary>A built-in pet (default RevBot), built by the tools/ scripts and embedded in the exe.</summary>
+    public static Atlas Load(string pet = "revbot")
     {
+        if (!IsBuiltIn(pet))
+            pet = "revbot";
         var asm = typeof(Atlas).Assembly;
         Manifest m;
-        using (var js = asm.GetManifestResourceStream("atlas.json") ?? throw new InvalidDataException("atlas.json is not embedded"))
+        string json = Resource(pet, "json"), png = Resource(pet, "png");
+        using (var js = asm.GetManifestResourceStream(json) ?? throw new InvalidDataException($"{json} is not embedded"))
             m = JsonSerializer.Deserialize<Manifest>(js, new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-                ?? throw new InvalidDataException("atlas.json is empty");
+                ?? throw new InvalidDataException($"{json} is empty");
 
         Bitmap sheet;
-        using (var ps = asm.GetManifestResourceStream("atlas.png") ?? throw new InvalidDataException("atlas.png is not embedded"))
+        using (var ps = asm.GetManifestResourceStream(png) ?? throw new InvalidDataException($"{png} is not embedded"))
         using (var decoded = new Bitmap(ps))
             sheet = new Bitmap(decoded); // detach from the stream; GDI+ keeps a stream-backed bitmap lazy
         return FromParts(sheet, m);
+    }
+
+    /// <summary>The tray icon for a built-in pet.</summary>
+    public static Icon LoadIcon(string pet, Size size)
+    {
+        if (!IsBuiltIn(pet))
+            pet = "revbot";
+        string ico = Resource(pet, "ico");
+        using var stream = typeof(Atlas).Assembly.GetManifestResourceStream(ico)
+            ?? throw new InvalidDataException($"{ico} is not embedded");
+        return new Icon(stream, size);
     }
 
     /// <summary>Validate a sheet + manifest and take ownership of the bitmap.</summary>

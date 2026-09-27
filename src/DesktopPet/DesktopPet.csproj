@@ -19,6 +19,10 @@
     <EmbeddedResource Include="Assets\atlas.png" LogicalName="atlas.png" />
     <EmbeddedResource Include="Assets\atlas.json" LogicalName="atlas.json" />
     <EmbeddedResource Include="Assets\pet.ico" LogicalName="pet.ico" />
+    <!-- Damien, built by tools/build_codex_pet.py -->
+    <EmbeddedResource Include="Assets\damien.atlas.png" LogicalName="damien.atlas.png" />
+    <EmbeddedResource Include="Assets\damien.atlas.json" LogicalName="damien.atlas.json" />
+    <EmbeddedResource Include="Assets\damien.ico" LogicalName="damien.ico" />
   </ItemGroup>
 
 </Project>

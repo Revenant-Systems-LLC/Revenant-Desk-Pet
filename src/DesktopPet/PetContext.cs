@@ -28,6 +28,8 @@ sealed class PetContext : ApplicationContext
     readonly Queue<(double t, int x, int y)> dragTrail = new();
     readonly List<(ToolStripMenuItem item, double size)> sizeItems = new();
     ToolStripMenuItem stayPutItem = null!;
+    ToolStripMenuItem petItems = null!;
+    string petId;                // the built-in pet on screen now (settings.Pet is the saved choice)
 
     // AI link: Claude Code hooks (via revbot-hook.exe) and direct commands
     AiLink? aiLink;
@@ -62,10 +64,12 @@ sealed class PetContext : ApplicationContext
     /// <param name="atlas">The pet to show; the context owns and disposes it.</param>
     /// <param name="trayIcon">Tray icon; owned and disposed by the context.</param>
     /// <param name="extendMenu">Adds extra items to the pet's menu (optional).</param>
+    /// <param name="petId">Which built-in pet <paramref name="atlas"/> is.</param>
     public PetContext(Atlas atlas, Icon trayIcon, bool demoMode, string title = "Desktop Pet",
-        Action<ContextMenuStrip, PetContext>? extendMenu = null)
+        Action<ContextMenuStrip, PetContext>? extendMenu = null, string petId = "revbot")
     {
         this.atlas = atlas;
+        this.petId = petId;
         this.title = title;
         this.extendMenu = extendMenu;
         pet = new Pet(atlas) { StayPut = settings.StayPut, Demo = demoMode };
@@ -188,7 +192,7 @@ sealed class PetContext : ApplicationContext
     /// <summary>
     /// One line from the AI link, on the UI thread. Hook lines look like
     /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
-    /// direct commands are "state NAME", "play NAME", "clear" and "ping".
+    /// direct commands are "state NAME", "play NAME", "pet ID", "clear" and "ping".
     /// </summary>
     void OnAiLine(string line)
     {
@@ -218,6 +222,9 @@ sealed class PetContext : ApplicationContext
                 break;
             case "play" when arg is not null:
                 pet.Play(arg);
+                break;
+            case "pet" when arg is not null:
+                SwitchPet(arg.ToLowerInvariant());
                 break;
             case "clear":
                 aiSessions.Clear();
@@ -608,6 +615,14 @@ sealed class PetContext : ApplicationContext
             size.DropDownItems.Add(item);
         }
 
+        var petMenu = new ToolStripMenuItem("Pet");
+        foreach (var (id, name) in Atlas.BuiltInPets)
+        {
+            var item = new ToolStripMenuItem(name, null, (_, _) => SwitchPet(id)) { Tag = id };
+            petMenu.DropDownItems.Add(item);
+        }
+        petItems = petMenu;
+
         stayPutItem = new ToolStripMenuItem("Stay put", null, (_, _) =>
         {
             pet.StayPut = !pet.StayPut;
@@ -622,6 +637,7 @@ sealed class PetContext : ApplicationContext
             actions,
             states,
             size,
+            petMenu,
             stayPutItem,
             new ToolStripMenuItem("Come here", null, (_, _) => ComeHere()),
         });
@@ -638,6 +654,8 @@ sealed class PetContext : ApplicationContext
             foreach (var (item, value) in sizeItems)
                 item.Checked = Math.Abs(value - settings.Size) < 1e-6;
             FillActionMenus(actions, states);
+            foreach (ToolStripMenuItem item in petItems.DropDownItems)
+                item.Checked = (string?)item.Tag == petId;
         };
         m.Closed += (_, _) => ReturnFocus();
         return m;
@@ -686,14 +704,24 @@ sealed class PetContext : ApplicationContext
 
     /// <summary>
     /// Swap in a different pet while running (e.g. a freshly imported sheet).
-    /// Takes ownership of <paramref name="next"/> and of <paramref name="icon"/>.
+    /// Takes ownership of <paramref name="next"/> and of <paramref name="icon"/>,
+    /// except when it throws: then nothing has changed and the caller still owns both.
     /// </summary>
     public void ReplaceAtlas(Atlas next, Icon? icon = null)
     {
+        // Build the new frames before touching anything, so a pet that can't be
+        // built leaves the current one running.
+        uint dpi = monitor != IntPtr.Zero ? Native.DpiOf(monitor) : 96;
+        double newScale = settings.Size * dpi / 144.0 * next.BaseScale;
+        var built = next.Build(newScale);
+
         var old = atlas;
         atlas = next;
         pet.ReplaceAtlas(next);
-        RefreshMonitor(force: true);
+        sprites = built;
+        scale = newScale;
+        pet.Scale = newScale;
+        ForceRedraw();
         old.Dispose();
         if (icon is not null)
         {
@@ -702,6 +730,39 @@ sealed class PetContext : ApplicationContext
             oldIcon?.Dispose();
         }
         Log.Info("pet replaced");
+    }
+
+    /// <summary>Switch to another built-in pet and remember the choice.</summary>
+    public void SwitchPet(string id)
+    {
+        if (!Atlas.IsBuiltIn(id) || id == petId)
+            return;
+        if (pet.Mode is Mode.Held or Mode.Falling)
+        {
+            Log.Info($"switch to {id} ignored while held or falling");
+            return;
+        }
+        Atlas? next = null;
+        Icon? icon = null;
+        try
+        {
+            next = Atlas.Load(id);
+            icon = Atlas.LoadIcon(id, SystemInformation.SmallIconSize);
+            ReplaceAtlas(next, icon);
+            next = null; // both owned by the context now
+            icon = null;
+            petId = id;
+            settings.Pet = id;
+            settings.Save();
+            pet.Play("wave");
+            Log.Info($"switched to {id}");
+        }
+        catch (Exception ex)
+        {
+            next?.Dispose();
+            icon?.Dispose();
+            Log.Error($"switch to {id}", ex);
+        }
     }
 
     void ShowMenu()
