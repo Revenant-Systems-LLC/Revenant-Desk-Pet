@@ -24,7 +24,7 @@ only in the separate kid's edition (Desk-Pet-Maker).
 - **Speech bubble (built 2026-09-27/28, branch feature/speech):** Dave's spec:
   the bubble appears at the upper right above the pet like a comic, the text
   types out letter by letter with a soft click per letter (old Animal
-  Crossing), the bubble grows as letters come in. 12 letters/s, soft wooden
+  Crossing), the bubble grows as letters come in. 16 letters/s, soft wooden
   "tock" (Dave's pick of three). "say TEXT" on the AI link; the LLM and
   Telegram will feed it.
 - **Telegram:** a bot made with BotFather, long polling (outbound only, no

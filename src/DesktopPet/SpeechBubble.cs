@@ -13,7 +13,7 @@ namespace DesktopPet;
 /// </summary>
 sealed class SpeechBubble : IDisposable
 {
-    const double CharsPerSecond = 12; // Dave: slow and readable, like the old Animal Crossing boxes
+    const double CharsPerSecond = 16; // Dave: readable, like the old Animal Crossing boxes (30 too fast, 12 too slow)
     const int MaxLineChars = 400;
 
     readonly BubbleWindow window = new();
@@ -91,8 +91,8 @@ sealed class SpeechBubble : IDisposable
             }
             nextCharAt += c switch
             {
-                '.' or '!' or '?' => 0.45,
-                ',' or ';' or ':' => 0.25,
+                '.' or '!' or '?' => 0.35,
+                ',' or ';' or ':' => 0.2,
                 _ => 1 / CharsPerSecond,
             };
         }

@@ -114,7 +114,7 @@ like a Claude Code hook can call it.
 ## Talking
 
 When he says something, a comic speech bubble appears at the upper right above
-his head. The text types out a letter at a time (about 12 a second, with
+his head. The text types out a letter at a time (about 16 a second, with
 pauses at commas and full stops) and each letter makes a soft wooden "tock",
 like the old Animal Crossing text boxes; the bubble grows as it fills, stays
 up long enough to read, then goes. Lines wait their turn. "Do something > Say
