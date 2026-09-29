@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Cut a white-background character video into matted RGBA frames + metrics.
 
-    python tools/video_frames.py NAME VIDEO [--fix-eyes] [--v3]
+    python tools/video_frames.py NAME VIDEO [--fix-eyes] [--v3] [--keep-white A-B]
 
 --fix-eyes repaints cartoon eyes (white with a pupil) as RevBot's solid
 black eyes with the standard highlights; with --v3, the new design's single
-highlight (upper right) instead of two.
+highlight (upper right) instead of two. --keep-white A-B keeps large white
+patches in frames A to B (something white he holds, like a sheet of paper);
+everywhere else, enclosed white that matches the background is cut as a gap.
 
 Writes (never touches the source video):
   art/video/NAME/frames/NNNN.png   RGBA, all cropped with the SAME box so
@@ -95,6 +97,7 @@ HIGHLIGHTS_V3 = {
     "right": [(0.236, -0.472, 0.241)],
 }
 FIX_EYES = False
+KEEP_WHITE = []   # frame ranges where he holds something white (--keep-white A-B)
 
 
 def repaint_eyes(c, fg0, height):
@@ -142,8 +145,10 @@ def repaint_eyes(c, fg0, height):
     return len(found)
 
 
-def matte(crop):
-    """Straight RGBA for a crop of a white-background frame, plus the fg mask."""
+def matte(crop, keep_big_white=False):
+    """Straight RGBA for a crop of a white-background frame, plus the fg mask.
+    keep_big_white: this frame shows something white he holds (the paper), so a
+    large enclosed white patch is that, not a gap."""
     c = crop.astype(np.int16)
     light = bg_like(c)
     lab, _ = ndimage.label(light)
@@ -166,9 +171,9 @@ def matte(crop):
     # (a lit antenna ball has a white-hot core), drop gaps between limbs
     rows0 = fg0.sum(1)
     head_top0 = int(np.argmax(rows0 > 0.35 * rows0.max())) if rows0.max() else 0
-    # Only true background shows through a gap: near the background's own white,
-    # and small. Metal shine is grey (180-220 against ~250), and a sheet of paper he
-    # holds is background-white but big: both stay.
+    # A gap between limbs shows the background's own white; the shine on his metal is
+    # grey (180-220 against ~250), so it stays. Paper is background-white too: in the
+    # frames where he holds it (keep_big_white) a large white patch stays.
     border = np.concatenate([c[0], c[-1], c[:, 0], c[:, -1]])
     bg_col = np.median(border, 0)
     fg_area = max(1, int(fg0.sum()))
@@ -180,7 +185,7 @@ def matte(crop):
         if any(y0 <= cy.min() and cy.max() < y1 and x0 <= cx.min() and cx.max() < x1 for y0, y1, x0, x1 in boxes):
             continue
         near_bg = np.abs(c[comp] - bg_col).max(1).mean() <= 15
-        if near_bg and comp.sum() <= 0.015 * fg_area:
+        if near_bg and (not keep_big_white or comp.sum() <= 0.015 * fg_area):
             bg |= comp
     fg = ~bg
     lab2, n2 = ndimage.label(fg)
@@ -244,7 +249,13 @@ def measure(keep, eyes, rgb):
 
 def main():
     global FIX_EYES, HIGHLIGHTS
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    argv = sys.argv[1:]
+    if "--keep-white" in argv:
+        k = argv.index("--keep-white")
+        a, b = argv[k + 1].split("-")
+        KEEP_WHITE.append((int(a), int(b)))
+        del argv[k:k + 2]
+    args = [a for a in argv if not a.startswith("--")]
     FIX_EYES = "--fix-eyes" in sys.argv
     if "--v3" in sys.argv:
         HIGHLIGHTS = HIGHLIGHTS_V3
@@ -273,7 +284,7 @@ def main():
     metrics = []
     for i, f in enumerate(frames(video, w, h)):
         crop = f[box[1]:box[3], box[0]:box[2]]
-        rgba, keep, eyes = matte(crop)
+        rgba, keep, eyes = matte(crop, any(a <= i <= b for a, b in KEEP_WHITE))
         if rgba is None:
             metrics.append(dict(index=i, empty=True))
             continue
