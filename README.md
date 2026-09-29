@@ -158,6 +158,20 @@ numbers are the `Float*`/`Hover*`/`Bob*` constants at the top of `Pet.cs`.
 
 ## Art pipeline
 
+RevBot's current look (charcoal, yellow hazard stripes, orange limbs, no mouth)
+comes from Dave's videos. `tools/video_frames.py NAME VIDEO` cuts a
+white-background video into matted frames in `art/video/NAME/` (`--fix-eyes
+--v3` repaints cartoon eyes as his solid eyes with the one highlight), and
+`tools/build_v3.py` picks each move's frames, scales every video to the same
+size, anchors his feet and writes `atlas.png`/`atlas.json`/`pet.ico`, with a QA
+sheet in `art/build/v3-contact.png`. The videos, frame ranges and speeds are
+listed at the top of `build_v3.py`; the prompts that made them are in
+`art/VIDEO-PROMPTS-v3.md`. He has no look-around frames in this look yet, so
+he doesn't turn his head toward the cursor.
+
+The older red RevBot was built by `tools/build_atlas.py` from the strips in
+`art/source/`:
+
 `tools/build_atlas.py` turns `art/source/` into the embedded
 `src/DesktopPet/Assets/atlas.png` + `atlas.json` + `pet.ico`, and writes a QA
 sheet to `art/build/contact.png`. Rerun it after changing the art, then

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Cut a white-background character video into matted RGBA frames + metrics.
 
-    python tools/video_frames.py NAME VIDEO [--fix-eyes]
+    python tools/video_frames.py NAME VIDEO [--fix-eyes] [--v3]
 
 --fix-eyes repaints cartoon eyes (white with a pupil) as RevBot's solid
-black eyes with the standard highlights.
+black eyes with the standard highlights; with --v3, the new design's single
+highlight (upper right) instead of two.
 
 Writes (never touches the source video):
   art/video/NAME/frames/NNNN.png   RGBA, all cropped with the SAME box so
@@ -86,6 +87,12 @@ def eye_blobs(lum, fg, height):
 HIGHLIGHTS = {
     "left": [(0.255, -0.47, 0.246), (-0.525, 0.59, 0.157)],
     "right": [(0.232, -0.475, 0.243), (-0.385, 0.71, 0.151)],
+}
+# The v3 design (2026-09-26) has only the big upper-right highlight, measured on
+# art/source/revbot-v3/reference-white.png: left (0.267, -0.464, 0.248), right (0.236, -0.472, 0.241).
+HIGHLIGHTS_V3 = {
+    "left": [(0.267, -0.464, 0.248)],
+    "right": [(0.236, -0.472, 0.241)],
 }
 FIX_EYES = False
 
@@ -227,9 +234,11 @@ def measure(keep, eyes, rgb):
 
 
 def main():
-    global FIX_EYES
+    global FIX_EYES, HIGHLIGHTS
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     FIX_EYES = "--fix-eyes" in sys.argv
+    if "--v3" in sys.argv:
+        HIGHLIGHTS = HIGHLIGHTS_V3
     if len(args) != 2:
         raise SystemExit(__doc__)
     name, video = args[0], Path(args[1])

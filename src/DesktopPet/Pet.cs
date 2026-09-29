@@ -433,7 +433,7 @@ sealed class Pet
         }
         if (clip.Name == "idle" && lookIndex is null && now >= nextFidget)
         {
-            var fidgets = new[] { ("fidget_tilt", 1.0), ("fidget_chest", 1.0), ("fidget_lean", 1.0) }
+            var fidgets = new[] { ("fidget_blink", 2.0), ("fidget_tilt", 1.0), ("fidget_chest", 1.0), ("fidget_lean", 1.0) }
                 .Where(f => atlas.Has(f.Item1)).ToArray();
             if (fidgets.Length > 0)
                 PlayClip(Pick(fidgets));
