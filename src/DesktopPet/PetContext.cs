@@ -68,6 +68,7 @@ sealed class PetContext : ApplicationContext
     ToolStripMenuItem chaseItem = null!;
     ToolStripMenuItem talkSoundItem = null!;
     readonly SpeechBubble bubble = new();
+    double lastAskAt = double.NegativeInfinity;
 
     // Watching you type: only "a key was pressed recently" (the cursor didn't
     // move, yet there was input) and which program is in front. Never which keys.
@@ -234,6 +235,16 @@ sealed class PetContext : ApplicationContext
         Log.Info($"says something ({text.Length} characters)"); // never the words themselves
     }
 
+    /// <summary>Claude Code is waiting on a permission prompt: say so (not more than once every 45 s).</summary>
+    void AskForOk()
+    {
+        double t = clock.Elapsed.TotalSeconds;
+        if (t - lastAskAt < 45)
+            return;
+        lastAskAt = t;
+        Say("Hey Dave, I need your OK on something.");
+    }
+
     void SayHello()
     {
         string name = Atlas.BuiltInPets.FirstOrDefault(p => p.Id == petId).Name ?? "RevBot";
@@ -380,9 +391,11 @@ sealed class PetContext : ApplicationContext
                 break;
             case "PermissionRequest":
                 SessionHold(session, "waiting");           // hand up: needs your OK
+                AskForOk();
                 break;
             case "Notification" when type == "permission_prompt":
                 SessionHold(session, "waiting");
+                AskForOk();
                 break;
             case "Notification" when type == "idle_prompt":
                 aiSessions.Remove(session);

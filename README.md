@@ -55,6 +55,13 @@ Wire it up with async hooks in `~/.claude/settings.json`, one entry per event
 "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"M:/Projects/Desktop-Pet/dist/revbot-hook.exe\"", "async": true, "timeout": 10 }] }]
 ```
 
+For the `Stop` hook use `revbot-hook.exe --speak`: besides the event, the pet
+says the opening of Claude's last reply (the first sentence or two, up to about
+160 characters, markdown stripped) in its speech bubble. It reads that reply
+from the transcript Claude Code points the hook to, sends it only over the
+local pipe, and writes it nowhere. When Claude waits on a permission prompt he
+says "Hey Dave, I need your OK on something." (at most every 45 s).
+
 Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
 `PostToolUse` (matcher `*`), `PostToolUseFailure`, `PermissionRequest`,
 `Notification`, `SubagentStart`, `SubagentStop`, `Stop`, `StopFailure`,
