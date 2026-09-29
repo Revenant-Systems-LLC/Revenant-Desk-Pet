@@ -111,6 +111,17 @@ now. The missing piece is a channel into the running process (a named pipe or
 a `--state working` argument forwarded to the running copy) so that something
 like a Claude Code hook can call it.
 
+## Talking
+
+When he says something, a comic speech bubble appears at the upper right above
+his head. The text types out a letter at a time (about 12 a second, with
+pauses at commas and full stops) and each letter makes a soft wooden "tock",
+like the old Animal Crossing text boxes; the bubble grows as it fills, stays
+up long enough to read, then goes. Lines wait their turn. "Do something > Say
+hello" tries it; "Talking sounds" in the menu turns the tocks off. Anything on
+this PC can make him talk through the AI link: `revbot-hook --send "say Hello
+there!"`. The log records only that he spoke, never the words.
+
 ## Windows are terrain
 
 The desktop works like a 2D side-scroller: the taskbar is the ground and the

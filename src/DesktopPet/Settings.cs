@@ -13,6 +13,8 @@ sealed class Settings
     public string Pet { get; set; } = "revbot";
     /// <summary>Climb onto and walk along the tops of open windows.</summary>
     public bool Terrain { get; set; } = true;
+    /// <summary>Letters click as a speech bubble types out.</summary>
+    public bool TalkSounds { get; set; } = true;
 
     /// <summary>"settings.json", or "settings.&lt;pet&gt;.json" for a friend pet.</summary>
     public static string FileName { get; set; } = "settings.json";

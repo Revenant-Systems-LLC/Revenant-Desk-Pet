@@ -66,6 +66,8 @@ sealed class PetContext : ApplicationContext
     double nextTerrainAt;
     ToolStripMenuItem terrainItem = null!;
     ToolStripMenuItem chaseItem = null!;
+    ToolStripMenuItem talkSoundItem = null!;
+    readonly SpeechBubble bubble = new();
 
     // Watching you type: only "a key was pressed recently" (the cursor didn't
     // move, yet there was input) and which program is in front. Never which keys.
@@ -214,6 +216,7 @@ sealed class PetContext : ApplicationContext
                 RefreshMonitor(force: false); // flew onto another monitor: its DPI now
             }
             Render();
+            TickBubble(t);
             savedX = (int)Math.Round(pet.X);
             savedY = (int)Math.Round(pet.GroundY);
         }
@@ -221,6 +224,29 @@ sealed class PetContext : ApplicationContext
         {
             Log.Error("tick", ex);
         }
+    }
+
+    /// <summary>Say something in a speech bubble above the pet (upper right), typed out a letter at a time.</summary>
+    public void Say(string text)
+    {
+        bubble.Sound = settings.TalkSounds;
+        bubble.Say(text);
+        Log.Info($"says something ({text.Length} characters)"); // never the words themselves
+    }
+
+    void SayHello()
+    {
+        string name = Atlas.BuiltInPets.FirstOrDefault(p => p.Id == petId).Name ?? "RevBot";
+        Say($"Hi! I'm {name}. Right-click me to see everything I can do.");
+    }
+
+    /// <summary>Keep the bubble typing and pointed at the pet's head (upper right of the current frame).</summary>
+    void TickBubble(double t)
+    {
+        if (lastSprite is not Sprite s)
+            return;
+        int headX = lastX + (int)Math.Round(s.W * 0.78), headY = lastY + (int)Math.Round(s.H * 0.06);
+        bubble.Tick(t, !hidden, headX, headY, scale, pet.Work);
     }
 
     void Render()
@@ -251,7 +277,7 @@ sealed class PetContext : ApplicationContext
     /// <summary>
     /// One line from the AI link, on the UI thread. Hook lines look like
     /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
-    /// direct commands are "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "invite ID", "sendhome", "jumpup", "ledges", "clear" and "ping".
+    /// direct commands are "say TEXT", "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "invite ID", "sendhome", "jumpup", "ledges", "clear" and "ping".
     /// </summary>
     void OnAiLine(string line)
     {
@@ -294,6 +320,9 @@ sealed class PetContext : ApplicationContext
                 break;
             case "ping":
                 Log.Info("ai link ping");
+                break;
+            case "say" when line.Length > 4:
+                Say(line[(line.IndexOf(' ') + 1)..]);
                 break;
             case "chase":
                 pet.SetChasing(arg?.ToLowerInvariant() switch { "on" => true, "off" => false, _ => !pet.Chasing });
@@ -683,6 +712,7 @@ sealed class PetContext : ApplicationContext
             pressed = false;
             window.Hide();
             timer.Interval = HiddenTickMs;
+            bubble.Hide();
             Log.Info("hidden: fullscreen app in front");
         }
         else if (!fullscreen && hidden)
@@ -884,6 +914,12 @@ sealed class PetContext : ApplicationContext
         });
 
         chaseItem = new ToolStripMenuItem("Chase the mouse", null, (_, _) => pet.SetChasing(!pet.Chasing));
+        talkSoundItem = new ToolStripMenuItem("Talking sounds", null, (_, _) =>
+        {
+            settings.TalkSounds = !settings.TalkSounds;
+            bubble.Sound = settings.TalkSounds;
+            settings.Save();
+        });
 
         var friendsMenu = new ToolStripMenuItem("Friends");
         foreach (var (id, name) in Atlas.BuiltInPets)
@@ -908,6 +944,7 @@ sealed class PetContext : ApplicationContext
             petMenu,
             friendsMenu,
             chaseItem,
+            talkSoundItem,
             stayPutItem,
             terrainItem,
             new ToolStripMenuItem("Come here", null, (_, _) => ComeHere()),
@@ -924,6 +961,7 @@ sealed class PetContext : ApplicationContext
             stayPutItem.Checked = pet.StayPut;
             terrainItem.Checked = settings.Terrain;
             chaseItem.Checked = pet.Chasing;
+            talkSoundItem.Checked = settings.TalkSounds;
             foreach (var (item, value) in sizeItems)
                 item.Checked = Math.Abs(value - settings.Size) < 1e-6;
             FillActionMenus(actions, states);
@@ -958,6 +996,9 @@ sealed class PetContext : ApplicationContext
                 actions.DropDownItems.Add(new ToolStripSeparator());
             actions.DropDownItems.Add("Take a nap", null, (_, _) => pet.Nap());
         }
+        if (actions.DropDownItems.Count > 0)
+            actions.DropDownItems.Add(new ToolStripSeparator());
+        actions.DropDownItems.Add("Say hello", null, (_, _) => SayHello());
         actions.Enabled = actions.DropDownItems.Count > 0;
 
         states.DropDownItems.Clear();
@@ -1125,6 +1166,7 @@ sealed class PetContext : ApplicationContext
             window.Dispose();
         }
         aiLink?.Dispose();
+        bubble.Dispose();
         surface.Dispose();
         atlas.Dispose();
         ExitThread();
