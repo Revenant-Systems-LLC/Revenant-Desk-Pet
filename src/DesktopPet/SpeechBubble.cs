@@ -123,7 +123,8 @@ sealed class SpeechBubble : IDisposable
 
     // ------------------------------------------------------------ drawing
 
-    static Font MakeFont(double scale) => new("Segoe UI Semibold", (float)(15 * scale), GraphicsUnit.Pixel);
+    // Verdana: made for reading on screens, big letters at small sizes (Dave: easier to read, bigger).
+    static Font MakeFont(double scale) => new("Verdana", (float)(19 * scale), GraphicsUnit.Pixel);
 
     /// <summary>Break the whole line into rows now, so words never jump to the next row while typing.</summary>
     static List<string> Wrap(string text, double scale)
@@ -131,7 +132,7 @@ sealed class SpeechBubble : IDisposable
         using var font = MakeFont(scale);
         using var bmp = new Bitmap(1, 1);
         using var g = Graphics.FromImage(bmp);
-        float max = (float)(250 * scale);
+        float max = (float)(320 * scale);
         float Width(string s) => g.MeasureString(s, font, PointF.Empty, StringFormat.GenericTypographic).Width;
         // Rows put back together must be exactly the text: the typing counts letters across them.
         var rows = new List<string>();
@@ -172,7 +173,7 @@ sealed class SpeechBubble : IDisposable
     void Present(int headX, int headY, double scale, Native.RECT work)
     {
         // Where it wants to be: its tail tip on the head, the bubble up and to the right.
-        int pad = (int)Math.Round(11 * scale), tail = (int)Math.Round(16 * scale);
+        int pad = (int)Math.Round(13 * scale), tail = (int)Math.Round(16 * scale);
         var (body, visibleRows) = Measure(scale, pad);
         int left = headX - (int)Math.Round(8 * scale);
         int top = headY - tail - body.Height;
