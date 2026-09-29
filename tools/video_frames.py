@@ -166,12 +166,21 @@ def matte(crop):
     # (a lit antenna ball has a white-hot core), drop gaps between limbs
     rows0 = fg0.sum(1)
     head_top0 = int(np.argmax(rows0 > 0.35 * rows0.max())) if rows0.max() else 0
+    # Only true background shows through a gap: near the background's own white,
+    # and small. Metal shine is grey (180-220 against ~250), and a sheet of paper he
+    # holds is background-white but big: both stay.
+    border = np.concatenate([c[0], c[-1], c[:, 0], c[:, -1]])
+    bg_col = np.median(border, 0)
+    fg_area = max(1, int(fg0.sum()))
     for i in set(np.unique(lab).tolist()) - {0} - edge:
         comp = lab == i
         cy, cx = np.nonzero(comp)
         if cy.max() < head_top0:
             continue
-        if not any(y0 <= cy.min() and cy.max() < y1 and x0 <= cx.min() and cx.max() < x1 for y0, y1, x0, x1 in boxes):
+        if any(y0 <= cy.min() and cy.max() < y1 and x0 <= cx.min() and cx.max() < x1 for y0, y1, x0, x1 in boxes):
+            continue
+        near_bg = np.abs(c[comp] - bg_col).max(1).mean() <= 15
+        if near_bg and comp.sum() <= 0.015 * fg_area:
             bg |= comp
     fg = ~bg
     lab2, n2 = ndimage.label(fg)

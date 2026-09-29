@@ -52,8 +52,9 @@ def pingpong(frames):
     return frames + frames[-2:0:-1]
 
 
-# name: (video, source frames in play order, fps, loop). Frames are 24 fps
+# name: (video, source frames in play order, fps, loop[, "flip"]). Frames are 24 fps
 # video frames; every 2nd one plays at 12 fps, which keeps the video's speed.
+# "flip" mirrors the frames: the walk video steps toward screen left.
 CLIPS = {
     "idle":         ("v3-jump", pingpong(span(0, 54, 3)), 8, True),
     "fidget_blink": ("v3-jump", span(54, 72), 12, False),
@@ -61,7 +62,7 @@ CLIPS = {
     "fidget_chest": ("v3-celebrate", span(74, 112), 12, False),
     "fidget_lean":  ("v3-celebrate", span(152, 180), 12, False),
     "happy":        ("v3-celebrate", span(186, 216), 12, False),
-    "walk_right":   ("v3-walk", "loop:100:190:20:60", 12, True),
+    "walk_right":   ("v3-walk", "loop:100:190:20:60", 12, True, "flip"),
     "wave":         ("v3-wts", span(18, 60), 12, False),
     "think":        ("v3-wts", span(66, 146, 3), 8, False),
     "shrug":        ("v3-wts", span(146, 190), 12, False),
@@ -172,7 +173,9 @@ def placement(video):
 def main():
     rows = {}          # clip -> list of (rgba, ox, oy)
     clips = {}
-    for name, (video, frames, fps, loop) in CLIPS.items():
+    for name, spec in CLIPS.items():
+        video, frames, fps, loop = spec[:4]
+        flip = "flip" in spec[4:]
         if isinstance(frames, str):
             _, lo, hi, mn, mx = frames.split(":")
             frames = best_loop(video, int(lo), int(hi), int(mn), int(mx))
@@ -187,7 +190,11 @@ def main():
             x0, y0, x1, y1 = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
             im = Image.fromarray(rgba[y0:y1, x0:x1], "RGBA").convert("RGBa")
             im = im.resize((max(1, round(im.width * s)), max(1, round(im.height * s))), Image.LANCZOS).convert("RGBA")
-            out.append((np.array(im), int(round((x0 - ax) * s)), int(round((y0 - ground) * s))))
+            ox, oy = int(round((x0 - ax) * s)), int(round((y0 - ground) * s))
+            if flip:
+                im = im.transpose(Image.FLIP_LEFT_RIGHT)
+                ox = -(ox + im.width)  # mirrored about the anchor
+            out.append((np.array(im), ox, oy))
         rows[name] = out
         clips[name] = dict(row=name, frames=[pos[f] for f in frames], fps=fps, loop=loop)
         print(f"{name:13s} {video:13s} {len(frames):3d} steps, {len(unique):3d} frames")
