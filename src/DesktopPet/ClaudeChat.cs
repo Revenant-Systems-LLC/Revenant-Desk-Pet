@@ -18,18 +18,14 @@ namespace DesktopPet;
 /// Nothing said either way is ever logged, only lengths and tool names.
 /// Events are raised on the UI thread.
 /// </summary>
-sealed class ClaudeChat : IDisposable
+sealed class ClaudeChat : IChatBrain
 {
     const string ReadOnlyTools = "Read,Grep,Glob,WebSearch,WebFetch"; // allowed without asking
     const string Tools = ReadOnlyTools + ",Edit,Write,NotebookEdit,Bash,PowerShell"; // the rest ask first
     const string Mode = "ask-v2"; // what it may do; a change starts a new conversation (an old one remembers saying it couldn't)
     const double IdleSeconds = 600; // no messages this long: let the process go (it resumes next time)
 
-    const string Prompt =
-        "You are speaking through RevBot, a small robot desktop pet on the user's screen. " +
-        "Your replies appear in a comic speech bubble above his head and type out a letter at a time, " +
-        "so keep every reply short: one to three plain sentences. No markdown, no lists, no headings, " +
-        "no code blocks, no emojis, no em dashes. If more detail would help, give the gist and offer the rest. " +
+    const string Prompt = ChatText.Persona + " " +
         "You can read, search and look things up freely. Anything that changes something, like writing or editing a file " +
         "or running a command, asks the user first: a Yes/No prompt pops up on the pet and you wait for the answer. " +
         "Say in a few words what you are about to do before you do it, and do one change at a time.";
@@ -59,15 +55,20 @@ sealed class ClaudeChat : IDisposable
     readonly Dictionary<string, string> askInputs = new(); // request id -> the tool input (JSON), sent back unchanged on Yes
 
     public string? SessionId { get; private set; }
+    public string Name => model is null ? "Claude" : "Claude " + char.ToUpperInvariant(model[0]) + model[1..];
     /// <summary>A message is on its way or being answered.</summary>
     public bool Busy { get; private set; }
     /// <summary>The last complete reply, for the chat box.</summary>
     public string LastReply { get; private set; } = "";
 
-    public ClaudeChat(Control ui, Settings settings)
+    readonly string? model; // null: Claude Code's own default
+
+    /// <param name="model">A Claude Code model alias ("sonnet", "opus", "haiku"), or null for its default.</param>
+    public ClaudeChat(Control ui, Settings settings, string? model = null)
     {
         this.ui = ui;
         this.settings = settings;
+        this.model = model;
         if (settings.ChatMode != Mode)
         {
             settings.ChatSession = null;
@@ -168,6 +169,11 @@ sealed class ClaudeChat : IDisposable
             psi.ArgumentList.Add("--resume");
             psi.ArgumentList.Add(SessionId!);
         }
+        if (model is not null)
+        {
+            psi.ArgumentList.Add("--model");
+            psi.ArgumentList.Add(model);
+        }
         psi.Environment["REVBOT_PET_CHAT"] = "1";
 
         var p = Process.Start(psi) ?? throw new InvalidOperationException("claude did not start");
@@ -249,7 +255,7 @@ sealed class ClaudeChat : IDisposable
                         ev.TryGetProperty("delta", out var d) && Str(d, "type") == "text_delta" && Str(d, "text") is string piece)
                     {
                         reply.Append(piece);
-                        ReplyGrowing?.Invoke(Tidy(reply.ToString()));
+                        ReplyGrowing?.Invoke(ChatText.Tidy(reply.ToString()));
                     }
                     else if (e.TryGetProperty("event", out ev) && Str(ev, "type") == "content_block_start" && reply.Length > 0)
                         reply.Append(' '); // a new block after some text (text, a tool, more text): keep a gap
@@ -370,13 +376,9 @@ sealed class ClaudeChat : IDisposable
             Finish("I lost my connection to Claude. Try me again.", error: true);
     }
 
-    /// <summary>No em or en dashes on screen, whatever the model does (Dave's rule): a comma reads the same.</summary>
-    static string Tidy(string text) =>
-        text.Replace(" \u2014 ", ", ").Replace("\u2014", ", ").Replace(" \u2013 ", ", ");
-
     void Finish(string text, bool error)
     {
-        text = Tidy(text);
+        text = ChatText.Tidy(text);
         Busy = false;
         lastUsed = clock.Elapsed.TotalSeconds;
         if (!error)

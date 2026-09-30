@@ -66,9 +66,16 @@ sealed class PetContext : ApplicationContext
     ToolStripMenuItem chaseItem = null!;
     ToolStripMenuItem talkSoundItem = null!;
     readonly SpeechBubble bubble = new();
+    readonly ThinkingMath math = new();              // math floating round his head while Claude thinks
+    readonly Dictionary<string, double> thinkingSince = new(); // sessions thinking over a prompt, since when
+    bool chatWaiting;                                // his own Claude hasn't started answering yet
     double lastAskAt = double.NegativeInfinity;
     // Talking to the pet's own Claude (main pet only)
-    ClaudeChat? chat;
+    IChatBrain? chat;                                // who the pet talks with (settings.ChatBrain)
+    ClaudeChat? Claude => chat as ClaudeChat;
+    SystemScan.Result? scan;                         // what this PC can run, for the Brain menu
+    bool scanning;
+    ToolStripMenuItem brainMenu = null!;
     ChatBox? chatBox;
     PermissionPrompt? prompt;                          // his Claude wants to change something: Yes / No
     readonly Queue<ClaudeChat.Ask> asks = new();
@@ -144,23 +151,8 @@ sealed class PetContext : ApplicationContext
             {
                 Log.Error("ai link start", ex); // the pet works without it
             }
-            chat = new ClaudeChat(window, settings);
-            chat.ReplyGrowing += text =>
-            {
-                bubble.Sound = settings.TalkSounds;
-                bubble.Stream(text, done: false);
-            };
-            chat.ReplyDone += (text, _) => bubble.Stream(text, done: true);
-            chat.PermissionAsked += ask =>
-            {
-                asks.Enqueue(ask);
-                ShowNextAsk();
-            };
-            chat.AsksCleared += () =>
-            {
-                asks.Clear();
-                prompt?.Close();
-            };
+            UseBrain(settings.ChatBrain, announce: false);
+            Rescan();
         }
 
         frameClock = new FrameClock(window, () => OnTick(null, EventArgs.Empty));
@@ -211,6 +203,7 @@ sealed class PetContext : ApplicationContext
                 p = Perf.Now;
                 Native.SetWindowPos(window.Handle, Native.HWND_TOPMOST, 0, 0, 0, 0,
                     Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_NOOWNERZORDER);
+                math.KeepOnTop();
                 Perf.Since("topmost", p);
             }
 
@@ -279,9 +272,10 @@ sealed class PetContext : ApplicationContext
             chatBox.Activate();
             return;
         }
-        var box = new ChatBox(scale, chat.LastReply);
+        var box = new ChatBox(scale, chat.LastReply, chat.Name);
         box.Submitted += text =>
         {
+            chatWaiting = true;
             chat.Send(text);
             pet.Play("think");
         };
@@ -298,6 +292,149 @@ sealed class PetContext : ApplicationContext
         chat.Warm(); // start his Claude now so it's ready when you press Enter
     }
 
+    // ------------------------------------------------------------ brains
+
+    /// <summary>Talk with this brain from now on ("claude", "claude:opus", "ollama:llama3.1:8b").</summary>
+    void UseBrain(string spec, bool announce = true)
+    {
+        chatBox?.Close();
+        asks.Clear();
+        prompt?.Close();
+        chat?.Dispose();
+        chatWaiting = false;
+        IChatBrain next = spec.StartsWith("ollama:", StringComparison.Ordinal)
+            ? new OllamaChat(window, spec["ollama:".Length..])
+            : new ClaudeChat(window, settings, spec.StartsWith("claude:", StringComparison.Ordinal) ? spec["claude:".Length..] : null);
+        next.ReplyGrowing += text =>
+        {
+            chatWaiting = false;
+            bubble.Sound = settings.TalkSounds;
+            bubble.Stream(text, done: false);
+        };
+        next.ReplyDone += (text, _) =>
+        {
+            chatWaiting = false;
+            bubble.Stream(text, done: true);
+        };
+        if (next is ClaudeChat claude)
+        {
+            claude.PermissionAsked += ask =>
+            {
+                asks.Enqueue(ask);
+                ShowNextAsk();
+            };
+            claude.AsksCleared += () =>
+            {
+                asks.Clear();
+                prompt?.Close();
+            };
+        }
+        chat = next;
+        if (settings.ChatBrain != spec)
+        {
+            settings.ChatBrain = spec;
+            settings.Save();
+        }
+        Log.Info($"brain: {next.Name}");
+        if (announce)
+            Say($"I'm thinking with {next.Name} now.");
+    }
+
+    /// <summary>Look at this PC again (graphics card, memory, Ollama's models), off the UI thread.</summary>
+    void Rescan()
+    {
+        if (scanning || quitting)
+            return;
+        scanning = true;
+        Task.Run(SystemScan.Run).ContinueWith(t =>
+        {
+            try
+            {
+                window.BeginInvoke(() =>
+                {
+                    scanning = false;
+                    if (t.IsCompletedSuccessfully)
+                    {
+                        scan = t.Result;
+                        Log.Info($"scan: {scan.Summary}; Ollama {(scan.OllamaRunning ? $"running, {scan.Models.Count} models" : "not running")}" +
+                                 (scan.Recommended is { } best ? $"; suggests {best.Name}" : ""));
+                    }
+                    else
+                        Log.Error("system scan", t.Exception);
+                });
+            }
+            catch (Exception)
+            {
+                // closing
+            }
+        });
+    }
+
+    /// <summary>Filled each time it opens, from the latest scan.</summary>
+    void FillBrainMenu()
+    {
+        if (scan is null || (DateTime.Now - scan.When).TotalSeconds > 20)
+            Rescan();
+        var items = brainMenu.DropDownItems;
+        items.Clear();
+        string current = settings.ChatBrain;
+        void Add(ToolStripItemCollection to, string label, string spec)
+        {
+            var item = new ToolStripMenuItem(label, null, (_, _) => UseBrain(spec)) { Checked = current == spec };
+            to.Add(item);
+        }
+        Add(items, "Claude (your default)", "claude");
+        Add(items, "Claude Sonnet", "claude:sonnet");
+        Add(items, "Claude Opus", "claude:opus");
+        Add(items, "Claude Haiku", "claude:haiku");
+        items.Add(new ToolStripSeparator());
+        if (scan is not { } r)
+        {
+            items.Add(new ToolStripMenuItem("Looking at your PC...") { Enabled = false });
+            return;
+        }
+        items.Add(new ToolStripMenuItem("Your PC: " + r.Summary) { Enabled = false });
+        if (!r.OllamaRunning)
+        {
+            items.Add(OllamaChat.Installed
+                ? new ToolStripMenuItem("Start Ollama and list its models", null, async (_, _) =>
+                {
+                    try
+                    {
+                        await OllamaChat.EnsureServer();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error("start ollama", ex);
+                    }
+                    Rescan();
+                })
+                : new ToolStripMenuItem("Local models need Ollama (ollama.com)") { Enabled = false });
+            return;
+        }
+        static string Gb(SystemScan.Model m) => m.Cloud ? "cloud" : $"{m.Bytes / 1e9:0.#} GB";
+        if (r.Recommended is { } best)
+            Add(items, $"Suggested for your PC: {best.Name} ({Gb(best)})", "ollama:" + best.Name);
+        var chat = r.Models.Where(m => !m.Embedding).ToList();
+        foreach (var (fit, label) in new[]
+        {
+            (SystemScan.Fit.Gpu, "Fits your graphics card"),
+            (SystemScan.Fit.Cloud, "Runs on Ollama's servers (no graphics card)"),
+            (SystemScan.Fit.TooBig, "Too big for your graphics card (slow)"),
+        })
+        {
+            var group = chat.Where(m => r.FitOf(m) == fit).OrderByDescending(m => m.ParamsB).ToList();
+            if (group.Count == 0)
+                continue;
+            var sub = new ToolStripMenuItem($"{label} ({group.Count})");
+            foreach (var m in group)
+                Add(sub.DropDownItems, $"{m.Name} ({Gb(m)})", "ollama:" + m.Name);
+            sub.Checked = group.Any(m => current == "ollama:" + m.Name);
+            items.Add(sub);
+        }
+        items.Add(new ToolStripMenuItem("Scan my PC again", null, (_, _) => Rescan()));
+    }
+
     /// <summary>One permission request at a time, over his head, until it's answered.</summary>
     void ShowNextAsk()
     {
@@ -307,7 +444,7 @@ sealed class PetContext : ApplicationContext
         var box = new PermissionPrompt(scale, ask.Question, ask.Detail);
         box.Answered += yes =>
         {
-            chat.Answer(ask.Id, yes);
+            Claude?.Answer(ask.Id, yes);
             Log.Info($"chat: {ask.Tool} {(yes ? "allowed" : "refused")}");
             pet.Play(yes ? "happy" : "shrug");
         };
@@ -356,6 +493,10 @@ sealed class PetContext : ApplicationContext
             return;
         int headX = lastX + (int)Math.Round(s.W * 0.78), headY = lastY + (int)Math.Round(s.H * 0.06);
         bubble.Tick(t, !hidden && chatBox is null && prompt is null, headX, headY, scale, pet.Work);
+        foreach (var gone in thinkingSince.Where(kv => t - kv.Value > 90).Select(kv => kv.Key).ToList())
+            thinkingSince.Remove(gone); // no tool call for a minute and a half: stop waiting for one
+        bool thinking = pet.Frame.Row == "think" || thinkingSince.Count > 0 || chatWaiting;
+        math.Tick(t, thinking, !hidden, lastX + s.W / 2, lastY + (int)Math.Round(s.H * 0.28), scale);
     }
 
     void Render()
@@ -476,11 +617,18 @@ sealed class PetContext : ApplicationContext
             case "talk":
                 OpenChat();
                 break;
+            case "brain" when arg is not null:
+                UseBrain(arg);
+                break;
+            case "scan":
+                Rescan();
+                break;
             case "climb":
                 if (!pet.ClimbUp())
                     Log.Info("nothing to climb up onto");
                 break;
             case "ask" when line.Length > 4 && chat is not null:
+                chatWaiting = true;
                 chat.Send(line[(line.IndexOf(' ') + 1)..]); // as if typed into the chat box
                 pet.Play("think");
                 break;
@@ -522,6 +670,8 @@ sealed class PetContext : ApplicationContext
     void OnHook(string hookEvent, string session, string? tool, string? type)
     {
         bool immediate = true;
+        if (hookEvent is not ("UserPromptSubmit" or "Notification" or "PermissionRequest"))
+            thinkingSince.Remove(session); // it's doing something now (or done)
         switch (hookEvent)
         {
             case "SessionStart":
@@ -529,6 +679,7 @@ sealed class PetContext : ApplicationContext
                 return;
             case "UserPromptSubmit":
                 SessionHold(session, "review");            // reading what you asked, thinking it over
+                thinkingSince[session] = clock.Elapsed.TotalSeconds; // math round his head till the first tool call
                 break;
             case "PreToolUse":
                 SessionHold(session, StateForTool(tool ?? ""));
@@ -548,12 +699,12 @@ sealed class PetContext : ApplicationContext
                 break;
             case "PermissionRequest":
                 SessionHold(session, "waiting");           // hand up: needs your OK
-                if (session != chat?.SessionId)
+                if (session != Claude?.SessionId)
                     AskForOk();                            // his own Claude's request is already up on screen
                 break;
             case "Notification" when type == "permission_prompt":
                 SessionHold(session, "waiting");
-                if (session != chat?.SessionId)
+                if (session != Claude?.SessionId)
                     AskForOk();
                 break;
             case "Notification" when type == "idle_prompt":
@@ -578,7 +729,7 @@ sealed class PetContext : ApplicationContext
                 break;
             }
             case "Stop":
-                if (chat?.SessionId == session)
+                if (Claude?.SessionId == session)
                     dropSayUntil = clock.Elapsed.TotalSeconds + 3;
                 aiSessions.Remove(session);
                 ApplyAiHold(immediate: true);
@@ -891,6 +1042,7 @@ sealed class PetContext : ApplicationContext
             if (frameClock is not null)
                 frameClock.Slow = true;
             bubble.Hide();
+            math.Hide();
             prompt?.Hide(); // waits, unanswered, until he's back
             Log.Info("hidden: fullscreen app in front");
         }
@@ -1137,7 +1289,13 @@ sealed class PetContext : ApplicationContext
             new ToolStripMenuItem("Come here", null, (_, _) => ComeHere()),
         });
         if (friendOf is null)
-            m.Items.Insert(2, new ToolStripMenuItem("Talk to Claude...", null, (_, _) => window.BeginInvoke(OpenChat)));
+        {
+            brainMenu = new ToolStripMenuItem("Brain");
+            brainMenu.DropDownItems.Add(new ToolStripMenuItem("...") { Enabled = false }); // so it shows as a submenu
+            brainMenu.DropDownOpening += (_, _) => FillBrainMenu();
+            m.Items.Insert(2, new ToolStripMenuItem("Talk...", null, (_, _) => window.BeginInvoke(OpenChat)));
+            m.Items.Insert(3, brainMenu);
+        }
         extendMenu?.Invoke(m, this);
         m.Items.AddRange(new ToolStripItem[]
         {
@@ -1349,6 +1507,8 @@ sealed class PetContext : ApplicationContext
         chatBox?.Close();
         prompt?.Close();
         chat?.Dispose();
+        OllamaChat.StopOurServer();
+        math.Dispose();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemEvents.SessionEnding -= OnSessionEnding;
         tray.Visible = false;

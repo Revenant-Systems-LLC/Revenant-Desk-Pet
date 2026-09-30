@@ -20,7 +20,7 @@ sealed class ChatBox : Form
     /// <summary>Enter was pressed on this text.</summary>
     public event Action<string>? Submitted;
 
-    public ChatBox(double scale, string lastReply)
+    public ChatBox(double scale, string lastReply, string brainName)
     {
         this.scale = scale;
         FormBorderStyle = FormBorderStyle.None;
@@ -54,7 +54,7 @@ sealed class ChatBox : Form
             BackColor = Color.FromArgb(244, 244, 246),
             ForeColor = Color.Black,
             Font = font,
-            PlaceholderText = "Talk to Claude...  (Enter sends, Esc closes)",
+            PlaceholderText = $"Talk to {brainName}...  (Enter sends, Esc closes)",
             WordWrap = true,
         };
         Controls.Add(replyBox);

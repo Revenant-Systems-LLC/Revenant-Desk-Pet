@@ -15,6 +15,8 @@ sealed class Settings
     public bool Terrain { get; set; } = true;
     /// <summary>Letters click as a speech bubble types out.</summary>
     public bool TalkSounds { get; set; } = true;
+    /// <summary>Who the pet talks with: "claude" (Claude Code's default model), "claude:opus" etc., or "ollama:MODEL".</summary>
+    public string ChatBrain { get; set; } = "claude";
     /// <summary>Where the pet's own Claude Code conversation runs (its working folder).</summary>
     public string ChatFolder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     /// <summary>That conversation's session id, so it carries on after a restart.</summary>
