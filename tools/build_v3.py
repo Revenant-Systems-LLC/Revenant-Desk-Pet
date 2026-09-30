@@ -91,6 +91,7 @@ CLIPS = {
     "stretch":      ("v3-stretch", span(6, 30) + span(34, 178, 4) + span(182, 222), 12, False),
     # magenta videos, 2026-09-28
     "held":         ("v3-pickedup", "loop:56:140:20:56", 12, True, "rest"),   # dangling, kicking
+    "air":          ("v3-jump", pingpong(span(111, 126, 3)), 12, True, "rest"),   # his own jumps, arms up (the physics lifts him)
     "land_hard":    ("v3-pickedup", span(143, 152, 3) + span(182, 224, 3), 8, False),  # skips 155-179, eyes shut
     "dizzy":        ("v3-dizzy", without(span(12, 96, 3), (38, 44), (94, 99)) + span(165, 192, 3), 8, False),
     "sit":          ("v3-sit", span(36, 150, 3) + span(207, 237, 3), 8, False),   # skips 198-206, angry glare

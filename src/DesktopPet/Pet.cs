@@ -18,7 +18,10 @@ enum Mode
 /// </summary>
 sealed class Pet
 {
-    const double WalkSpeed = 75;        // px/s; roughly matches the stride at 7 fps
+    const double WalkSpeed = 62;        // px/s
+    const double Stride = 42;           // px/s the planted foot slides back in the walk frames at clip rate 1 (v3 walk, measured 2026-09-30); walk frames play at speed / Stride so his feet don't skate
+    const double WalkEaseIn = 0.16;     // s from standing to full walking speed
+    const double WalkEaseOut = 18;      // px before the target where he starts slowing down
     const double EdgeMargin = 90;       // keep walks this far from the monitor edges
     const double WatchRadius = 320;     // cursor closer than this to the head gets watched
     const double HeadHeight = 100;      // head centre above the feet
@@ -43,8 +46,19 @@ sealed class Pet
     const double JumpReach = 280;       // px; the highest ledge he jumps up to
     const double FloatRise = 180;       // px/s; a floating pet glides to a new floor no faster than this
     // Chase mode: he goes after the mouse cursor. Pretend only: the real cursor is never touched.
-    const double ChaseRun = 2.4;        // times walking speed (his walk frames play twice as fast)
+    const double ChaseRun = 2.4;        // times walking speed (his walk frames keep pace, see Stride)
     const double ChaseHopReach = 260;   // px above his head he jumps for the cursor
+    // Jump feel, walking pets only: a crouch before take-off, a stretch on the way up,
+    // lighter gravity around the top of his own jumps (hang time), heavier coming down.
+    const double CrouchSeconds = 0.09;
+    const double ApexBand = 220;        // px/s; |vy| under this is the top of the arc
+    const double ApexGravity = 0.45;    // share of gravity there
+    const double FallGravity = 1.35;    // share of gravity coming down from his own jump
+    // Held, walking pets only: he swings like a pendulum from where he was grabbed.
+    const double SwingLength = 90;      // px from the grab point to his centre of mass
+    const double SwingDamping = 3.0;    // 1/s
+    const double SwingDrive = 0.35;     // how hard the cursor's acceleration pushes him (1 = a real pendulum, which pins at the limit on any quick drag)
+    const double SwingMax = 35;         // degrees either way
 
     Atlas atlas;
     readonly Random rng = new();
@@ -71,6 +85,14 @@ sealed class Pet
     Ledge? jumpFor;             // walking to a take-off spot, then jumping up onto this ledge
     bool selfMove;              // this fall is his own jump or step off: no drag, no fall-apart
     double clipRate = 1;        // animation speed (running in chase mode)
+    double walkRate = 1;        // walk frames' rate for his current speed
+    (double Vx, double Vy)? takeoff; // crouching: leaves the ground with this velocity
+    Mode takeoffMode;
+    double crouchAt, launchUp;
+    double gripDx, gripDy;      // where he was grabbed, from his anchor
+    double swing, swingV;       // pendulum angle (radians, + = body toward +x) and its rate
+    double lastGripX, gripVx;
+    bool gripSeen;
     int cursorX, cursorY;
     double chaseHopAt, chaseCaughtAt = double.NegativeInfinity;
     bool friendNear, visiting;
@@ -124,8 +146,10 @@ sealed class Pet
     public double AnchorY => mode == Mode.Held ? Math.Min(dragAy, GroundY) : GroundY - Lift;
     public string? HeldState => holdClip;
     public (string Row, int Index) Frame { get; private set; } = ("idle", 0);
-    /// <summary>Squash/stretch and tilt (degrees) about the anchor, for landings and dizziness; (1, 1, 0) most of the time.</summary>
+    /// <summary>Squash/stretch and tilt (degrees) about the anchor, for landings, jumps, swinging and dizziness; (1, 1, 0) most of the time.</summary>
     public (double Sx, double Sy, double Degrees) Pose { get; private set; } = (1, 1, 0);
+    /// <summary>Where to draw the anchor relative to (X, AnchorY): swinging from the grab point moves it.</summary>
+    public (double Dx, double Dy) PoseShift { get; private set; }
     /// <summary>The monitor containing a screen point (its bounds and work area), or null if no monitor is there. Lets a throw carry on to the next screen.</summary>
     public Func<double, double, (Native.RECT Bounds, Native.RECT Work)?>? MonitorAt { get; set; }
 
@@ -264,10 +288,15 @@ sealed class Pet
     /// <summary>Force a look direction (0..15, clockwise from up), or null to follow the cursor.</summary>
     public void ForceLook(int? index) => forcedLook = index is int i ? ((i % Atlas.LookDirections) + Atlas.LookDirections) % Atlas.LookDirections : null;
 
-    public void BeginDrag()
+    /// <param name="gripDx">Where the cursor holds him, from his anchor (he swings from there).</param>
+    public void BeginDrag(double gripDx = 0, double gripDy = 0)
     {
         ToTaskbar(); // measured from the taskbar while held, wherever it was standing
         jumpFor = null;
+        takeoff = null;
+        (this.gripDx, this.gripDy) = (gripDx, gripDy);
+        swing = swingV = 0;
+        gripSeen = false;
         selfMove = false;
         mode = Mode.Held;
         dizzyPending = false;
@@ -372,6 +401,30 @@ sealed class Pet
         now += dt;
         clipT += dt * clipRate;
         (this.cursorX, this.cursorY) = (cursorX, cursorY);
+        if (takeoff is (double tvx, double tvy))
+        {
+            if (mode != takeoffMode)
+                takeoff = null; // picked up, poked or put to sleep mid-crouch
+            else if (now - crouchAt >= CrouchSeconds)
+                LeaveGround(tvx, tvy);
+            else
+            {
+                Pose = CurrentPose();
+                PoseShift = default;
+                Frame = (clip.Row, ClipFrame());
+                return;
+            }
+        }
+        if (mode == Mode.Held && !Floats)
+            TickSwing(dt);
+        else if (swing != 0)
+        {
+            // let go mid-swing: straighten up quickly
+            swing *= Math.Exp(-12 * dt);
+            swingV = 0;
+            if (Math.Abs(swing) < 0.002)
+                swing = 0;
+        }
         switch (mode)
         {
             case Mode.Idle: TickIdle(idleMs); break;
@@ -387,6 +440,8 @@ sealed class Pet
             SteerChase();
         else
             clipRate = 1;
+        if (mode == Mode.Walk && !Floats)
+            clipRate = walkRate; // feet keep pace with how fast he's moving
         if (mode is not (Mode.Held or Mode.Falling))
             KeepFooting();
         if (Floats && mode is not (Mode.Held or Mode.Falling))
@@ -403,6 +458,7 @@ sealed class Pet
         UpdateWatch(cursorX, cursorY);
 
         Pose = CurrentPose();
+        PoseShift = SwingShift();
 
         int? look = atlas.HasLook ? forcedLook ?? lookIndex : null;
         Frame = mode == Mode.Idle && clip.Name == "idle" && look is int li
@@ -517,11 +573,18 @@ sealed class Pet
     void TickWalk(double dt)
     {
         double speed = Chasing ? WalkSpeed * ChaseRun : WalkSpeed;
+        double left = Math.Abs(walkTarget - X) / Scale;
         if (Floats)
         {
             // drift: ease in over the first second, ease out over the last 60 px
-            double left = Math.Abs(walkTarget - X) / Scale;
             speed = FloatSpeed * (Chasing ? 3 : 1) * Math.Min(1, (now - walkStart) / 1.0) * Math.Clamp(left / 60, 0.2, 1);
+        }
+        else
+        {
+            // quick ease in from standing, ease out into the stop
+            double k = Math.Clamp((now - walkStart) / WalkEaseIn, 0, 1);
+            speed *= Math.Max(0.2, k * k * (3 - 2 * k)) * Math.Clamp(Math.Sqrt(left / WalkEaseOut), 0.35, 1);
+            walkRate = Math.Min(speed / Stride, 2.6); // running: past ~31 fps the frames just flicker; the feet slide a little instead
         }
         X += walkDir * speed * Scale * dt;
         if (visiting && Friend is (double vfx, _))
@@ -565,7 +628,7 @@ sealed class Pet
             return;
         }
         double feetBefore = GroundY - Lift;
-        vy += Gravity * Scale * dt;
+        vy += (selfMove ? JumpAccel(vy) : Gravity * Scale) * dt;
         Lift -= vy * dt;
         X += vx * dt;
         if (!selfMove)
@@ -811,18 +874,116 @@ sealed class Pet
 
     void ChaseHop(double above)
     {
-        double gAcc = Gravity * Scale;
-        double up = Math.Sqrt(2 * gAcc * (above + 20 * Scale));
-        ToTaskbar();
-        vy = -up;
-        vx = Math.Clamp((cursorX - X) * 2, -300 * Scale, 300 * Scale);
-        selfMove = true;
-        fallFrom = Lift;
-        napping = waking = false;
-        mode = Mode.Falling;
-        PlayClip("held");
+        var (up, _) = SolveJump(above + 20 * Scale, 0);
+        StartTakeoff(Math.Clamp((cursorX - X) * 2, -300 * Scale, 300 * Scale), -up);
         chaseHopAt = now + 1.3;
         Log.Info("jumps for the cursor");
+    }
+
+    // ------------------------------------------------------------ jumping
+
+    /// <summary>Crouch for a moment, then leave the ground with this velocity (see <see cref="Tick"/>).</summary>
+    void StartTakeoff(double tvx, double tvy)
+    {
+        jumpFor = null;
+        napping = waking = false;
+        lookIndex = null;
+        takeoff = (tvx, tvy);
+        takeoffMode = mode;
+        crouchAt = now;
+        launchUp = -tvy;
+        if (Floats)
+            LeaveGround(tvx, tvy); // no code-made crouch for a floating pet
+    }
+
+    void LeaveGround(double tvx, double tvy)
+    {
+        takeoff = null;
+        ToTaskbar();
+        vx = tvx;
+        vy = tvy;
+        selfMove = true;
+        fallFrom = Lift;
+        mode = Mode.Falling;
+        PlayClip(atlas.Has("air") ? "air" : "held");
+    }
+
+    /// <summary>Gravity on his own jumps: lighter around the top (hang time), heavier coming down.</summary>
+    double JumpAccel(double vy) =>
+        Gravity * Scale * (Math.Abs(vy) < ApexBand * Scale ? ApexGravity : vy > 0 ? FallGravity : 1);
+
+    /// <summary>
+    /// Take-off speed that peaks <paramref name="peak"/> px above the start under
+    /// <see cref="JumpAccel"/>, and how long until he is back down to
+    /// <paramref name="land"/> px above it. Stepped the way the tick steps; once per jump.
+    /// </summary>
+    (double Up, double Flight) SolveJump(double peak, double land)
+    {
+        (double Top, double Flight) Fly(double up)
+        {
+            const double h = 1.0 / 480;
+            double y = 0, v = -up, t = 0, top = 0; // y: height above take-off; v: screen vy (down is +)
+            while (t < 5)
+            {
+                v += JumpAccel(v) * h;
+                y -= v * h;
+                t += h;
+                top = Math.Max(top, y);
+                if (v > 0 && y <= land)
+                    break;
+            }
+            return (top, t);
+        }
+        double lo = 0, hi = 8000 * Scale;
+        for (int i = 0; i < 40; i++)
+        {
+            double mid = (lo + hi) / 2;
+            if (Fly(mid).Top < peak)
+                lo = mid;
+            else
+                hi = mid;
+        }
+        return (hi, Fly(hi).Flight);
+    }
+
+    // ------------------------------------------------------------ swinging
+
+    /// <summary>Held: a pendulum hanging from the grab point, pushed by how the cursor accelerates sideways.</summary>
+    void TickSwing(double dt)
+    {
+        if (dt <= 0)
+            return;
+        double gx = X + gripDx;
+        if (!gripSeen)
+        {
+            gripSeen = true;
+            lastGripX = gx;
+            gripVx = 0;
+        }
+        double v = (gx - lastGripX) / dt;
+        lastGripX = gx;
+        double smoothed = gripVx + (v - gripVx) * (1 - Math.Exp(-dt / 0.03)); // mouse moves arrive unevenly
+        double a = Math.Clamp((smoothed - gripVx) / dt, -40000 * Scale, 40000 * Scale);
+        gripVx = smoothed;
+        double len = SwingLength * Scale, g = Gravity * Scale;
+        swingV += (-(g / len) * Math.Sin(swing) - SwingDrive * (a / len) * Math.Cos(swing) - SwingDamping * swingV) * dt;
+        swing += swingV * dt;
+        double max = SwingMax * Math.PI / 180;
+        if (Math.Abs(swing) > max)
+        {
+            swing = Math.Sign(swing) * max;
+            swingV *= -0.3;
+        }
+    }
+
+    /// <summary>The swing turns him about the grab point; the renderer turns him about his anchor, so move the anchor to match.</summary>
+    (double, double) SwingShift()
+    {
+        if (swing == 0 || Floats)
+            return default;
+        double phi = -swing, c = Math.Cos(phi), s = Math.Sin(phi);
+        double ax = -gripDx, ay = -gripDy; // anchor, from the grab point
+        return (ax * c - ay * s - ax, ax * s + ay * c - ay);
     }
 
     // ------------------------------------------------------------ terrain
@@ -915,7 +1076,7 @@ sealed class Pet
         fallFrom = Lift;
         napping = waking = false;
         mode = Mode.Falling;
-        PlayClip("held");
+        PlayClip(atlas.Has("air") ? "air" : "held");
     }
 
     /// <summary>
@@ -995,17 +1156,8 @@ sealed class Pet
             GoIdle();
             return;
         }
-        double gAcc = Gravity * Scale, over = 45 * Scale; // peak a little above the ledge
-        double up = Math.Sqrt(2 * gAcc * (h + over));
-        double flight = up / gAcc + Math.Sqrt(2 * over / gAcc);
-        ToTaskbar();
-        vy = -up;
-        vx = (landX - X) / flight;
-        selfMove = true;
-        fallFrom = Lift;
-        napping = waking = false;
-        mode = Mode.Falling;
-        PlayClip("held");
+        var (up, flight) = SolveJump(h + 45 * Scale, h); // peak a little above the ledge
+        StartTakeoff((landX - X) / flight, -up);
         Log.Info($"jump up {h:0}px onto a window");
     }
 
@@ -1066,19 +1218,35 @@ sealed class Pet
         if (Floats)
             return (1, 1, 0);
         double sx = 1, sy = 1, deg = 0;
+        if (takeoff is not null)
+        {
+            // crouch before take-off
+            double k = Math.Sin(Math.Clamp((now - crouchAt) / CrouchSeconds, 0, 1) * Math.PI / 2);
+            sy = 1 - 0.12 * k;
+            sx = 1 + 0.07 * k;
+        }
+        else if (mode == Mode.Falling && selfMove && vy < 0 && launchUp > 0)
+        {
+            // stretch on the way up, easing off toward the top
+            double k = Math.Clamp(-vy / launchUp, 0, 1);
+            sy = 1 + 0.09 * k;
+            sx = 1 - 0.05 * k;
+        }
+        if (swing != 0)
+            deg -= swing * 180 / Math.PI;
         double tl = now - landAt;
         if (tl < SquashSeconds)
         {
             // squash down, spring back a little past normal, settle
             double k = landImpact * 0.3 * Math.Exp(-tl / 0.12) * Math.Cos(2 * Math.PI * tl / 0.3);
-            sy = 1 - k;
-            sx = 1 + 0.6 * k;
+            sy *= 1 - k;
+            sx *= 1 + 0.6 * k;
         }
         if (mode == Mode.Action && requested == "dizzy" && !atlas.Has("dizzy"))
         {
             // code-made wobble, only while there's no drawn dizzy clip
             double td = now - dizzyAt;
-            deg = DizzyTilt * Math.Sin(2 * Math.PI * 1.4 * td) * Math.Max(0, 1 - td / DizzySeconds);
+            deg += DizzyTilt * Math.Sin(2 * Math.PI * 1.4 * td) * Math.Max(0, 1 - td / DizzySeconds);
         }
         return (sx, sy, deg);
     }

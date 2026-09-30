@@ -59,6 +59,14 @@ sealed class LayeredSurface : IDisposable
         }
     }
 
+    /// <summary>Move the window without sending its pixels again (the picture hasn't changed).</summary>
+    public void Move(IntPtr hwnd, int x, int y)
+    {
+        const uint SWP_NOZORDER = 0x0004;
+        Native.SetWindowPos(hwnd, IntPtr.Zero, x, y, 0, 0,
+            Native.SWP_NOSIZE | SWP_NOZORDER | Native.SWP_NOACTIVATE | Native.SWP_NOOWNERZORDER);
+    }
+
     /// <summary>Forget what was drawn, so the next Present copies pixels again.</summary>
     public void Invalidate() => current = null;
 

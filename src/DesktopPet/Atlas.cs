@@ -73,6 +73,7 @@ sealed class Atlas : IDisposable
         ["working"] = ["think"],
         ["held"] = ["jump"],
         ["thrown"] = ["held", "jump"],
+        ["air"] = ["held", "jump"],
         ["failed"] = ["land"],
         ["walk_left"] = ["walk_right"],
     };

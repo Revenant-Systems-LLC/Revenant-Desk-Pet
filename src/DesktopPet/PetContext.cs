@@ -10,9 +10,6 @@ namespace DesktopPet;
 /// </summary>
 sealed class PetContext : ApplicationContext
 {
-    const int TickMs = 30;
-    const int HiddenTickMs = 500;
-
     readonly Settings settings = Settings.Load();
     readonly string title;
     readonly Action<ContextMenuStrip, PetContext>? extendMenu;
@@ -22,7 +19,7 @@ sealed class PetContext : ApplicationContext
     readonly LayeredSurface surface = new();
     readonly ContextMenuStrip menu;
     readonly NotifyIcon tray;
-    readonly System.Windows.Forms.Timer timer = new() { Interval = TickMs };
+    FrameClock? frameClock;      // ticks in step with the display (about 60 a second)
     readonly Stopwatch clock = Stopwatch.StartNew();
     readonly DemoRunner? demo;
     readonly Queue<(double t, int x, int y)> dragTrail = new();
@@ -50,6 +47,7 @@ sealed class PetContext : ApplicationContext
 
     Dictionary<(string Row, int Index), Sprite> sprites = new();
     double scale = -1;
+    double buildingScale = -1;   // a background rebuild for this scale is running
     IntPtr monitor;
     double lastT, nextMonitorAt, nextFullscreenAt, nextTopmostAt, nextDragMonitorAt;
     volatile bool displayChanged;
@@ -142,8 +140,7 @@ sealed class PetContext : ApplicationContext
             }
         }
 
-        timer.Tick += OnTick;
-        timer.Start();
+        frameClock = new FrameClock(window, () => OnTick(null, EventArgs.Empty));
     }
 
     // ------------------------------------------------------------ loop
@@ -153,13 +150,18 @@ sealed class PetContext : ApplicationContext
         try
         {
             double t = clock.Elapsed.TotalSeconds;
+            long tickStart = Perf.Now, p;
+            if (lastT > 0)
+                Perf.Add("gap", (t - lastT) * 1000);
             double dt = Math.Clamp(t - lastT, 0, 0.1);
             lastT = t;
 
             if (t >= nextFullscreenAt)
             {
                 nextFullscreenAt = t + 1.0;
+                p = Perf.Now;
                 CheckFullscreen();
+                Perf.Since("fullscreen", p);
             }
             if (hidden)
                 return;
@@ -175,21 +177,27 @@ sealed class PetContext : ApplicationContext
             else if (t >= nextMonitorAt && !dragging)
             {
                 nextMonitorAt = t + 0.5;
+                p = Perf.Now;
                 RefreshMonitor(force: false);
+                Perf.Since("monitor", p);
             }
 
             if (t >= nextTopmostAt && !menu.Visible)
             {
                 nextTopmostAt = t + 3.0;
+                p = Perf.Now;
                 Native.SetWindowPos(window.Handle, Native.HWND_TOPMOST, 0, 0, 0, 0,
                     Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE | Native.SWP_NOOWNERZORDER);
+                Perf.Since("topmost", p);
             }
 
             if (terrain is not null && t >= nextTerrainAt)
             {
                 nextTerrainAt = t + 0.5; // windows to climb, and other pets
+                p = Perf.Now;
                 terrain.Refresh();
                 pet.Friend = NearestFriend();
+                Perf.Since("terrain", p);
             }
             if (friendOf is int parent && t >= nextFriendCheckAt)
             {
@@ -206,20 +214,30 @@ sealed class PetContext : ApplicationContext
             if (t >= nextTypingCheckAt)
             {
                 nextTypingCheckAt = t + 0.25;
+                p = Perf.Now;
                 CheckTyping(t, cursor);
+                Perf.Since("typing", p);
             }
             demo?.Tick(t);
             TickAiLink(t);
+            p = Perf.Now;
             pet.Tick(dt, cursor.X, cursor.Y, Native.IdleMilliseconds());
+            Perf.Since("pet", p);
             if (!pet.Work.SameAs(petWorkSeen))
             {
                 petWorkSeen = pet.Work;
                 RefreshMonitor(force: false); // flew onto another monitor: its DPI now
             }
+            p = Perf.Now;
             Render();
+            Perf.Since("render", p);
+            p = Perf.Now;
             TickBubble(t);
+            Perf.Since("bubble", p);
             savedX = (int)Math.Round(pet.X);
             savedY = (int)Math.Round(pet.GroundY);
+            Perf.Since("tick", tickStart);
+            Perf.Report(t);
         }
         catch (Exception ex)
         {
@@ -267,14 +285,57 @@ sealed class PetContext : ApplicationContext
         var (sx, sy, deg) = pet.Pose;
         if (sx != 1 || sy != 1 || deg != 0)
             s = Atlas.Posed(s, sx, sy, deg);
-        int x = (int)Math.Round(pet.X) + s.X0;
-        int y = (int)Math.Round(pet.AnchorY) + s.Y0;
+        var (dx, dy) = pet.PoseShift;
+        int x = (int)Math.Round(pet.X + dx) + s.X0;
+        int y = (int)Math.Round(pet.AnchorY + dy) + s.Y0;
         if (ReferenceEquals(s, lastSprite) && x == lastX && y == lastY)
             return;
-        surface.Present(window.Handle, s, x, y);
+        if (ReferenceEquals(s, lastSprite))
+            surface.Move(window.Handle, x, y); // same picture, new place: no need to send the pixels again
+        else
+            surface.Present(window.Handle, s, x, y);
+        Perf.Presented();
         lastSprite = s;
         lastX = x;
         lastY = y;
+    }
+
+    /// <summary>
+    /// Rebuild the frames for a new scale on a worker thread (a few hundred ms for
+    /// the whole atlas) and swap them in when done; he keeps moving meanwhile, at
+    /// the old size.
+    /// </summary>
+    void BuildInBackground(double newScale)
+    {
+        buildingScale = newScale;
+        var a = atlas;
+        Task.Run(() =>
+        {
+            try
+            {
+                var sw = Stopwatch.StartNew();
+                Dictionary<(string Row, int Index), Sprite> built;
+                lock (a) // one thread at a time on the sheet bitmap
+                    built = a.Build(newScale);
+                long ms = sw.ElapsedMilliseconds;
+                window.BeginInvoke(() =>
+                {
+                    if (buildingScale == newScale)
+                        buildingScale = -1;
+                    if (quitting || !ReferenceEquals(a, atlas))
+                        return; // switched pets meanwhile
+                    sprites = built;
+                    scale = newScale;
+                    pet.Scale = newScale;
+                    ForceRedraw();
+                    Log.Info($"scale {newScale:0.###}: {built.Count} frames in {ms} ms (in the background)");
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Error("background frame build", ex); // e.g. the pet was switched and its sheet disposed
+            }
+        });
     }
 
     void ForceRedraw()
@@ -667,15 +728,18 @@ sealed class PetContext : ApplicationContext
 
         // The art is drawn for 150% (144 dpi); keep the same physical-inch size elsewhere.
         double newScale = settings.Size * dpi / 144.0 * atlas.BaseScale;
-        if (force || Math.Abs(newScale - scale) > 1e-6)
+        if (force)
         {
             var sw = Stopwatch.StartNew();
-            sprites = atlas.Build(newScale);
+            lock (atlas)
+                sprites = atlas.Build(newScale);
             scale = newScale;
             pet.Scale = newScale;
             ForceRedraw();
             Log.Info($"scale {newScale:0.###}: {sprites.Count} frames in {sw.ElapsedMilliseconds} ms");
         }
+        else if (Math.Abs(newScale - scale) > 1e-6 && Math.Abs(newScale - buildingScale) > 1e-6)
+            BuildInBackground(newScale); // onto a monitor with other scaling: don't freeze him while it builds
         // In the air the pet decides which monitor it is over (a throw can carry it
         // across), unless its monitor has gone away (unplugged, rearranged).
         if (force || (!work.SameAs(pet.Work) && (pet.Mode != Mode.Falling || !StillThere(pet.Work))))
@@ -724,7 +788,8 @@ sealed class PetContext : ApplicationContext
                 FinishDrag();
             pressed = false;
             window.Hide();
-            timer.Interval = HiddenTickMs;
+            if (frameClock is not null)
+                frameClock.Slow = true;
             bubble.Hide();
             Log.Info("hidden: fullscreen app in front");
         }
@@ -733,7 +798,8 @@ sealed class PetContext : ApplicationContext
             hidden = false;
             window.Show();
             ForceRedraw();
-            timer.Interval = TickMs;
+            if (frameClock is not null)
+                frameClock.Slow = false;
             Log.Info("shown");
         }
     }
@@ -786,7 +852,7 @@ sealed class PetContext : ApplicationContext
             if (Math.Abs(c.X - pressAt.X) < threshold && Math.Abs(c.Y - pressAt.Y) < threshold)
                 return;
             dragging = true;
-            pet.BeginDrag();
+            pet.BeginDrag(-grabDx, -grabDy); // he swings from where you grabbed him
             shakeTimesX.Clear();
             shakeTimesY.Clear();
             shakeDirX = shakeDirY = 0;
@@ -1045,7 +1111,9 @@ sealed class PetContext : ApplicationContext
         // built leaves the current one running.
         uint dpi = monitor != IntPtr.Zero ? Native.DpiOf(monitor) : 96;
         double newScale = settings.Size * dpi / 144.0 * next.BaseScale;
-        var built = next.Build(newScale);
+        Dictionary<(string Row, int Index), Sprite> built;
+        lock (next)
+            built = next.Build(newScale);
 
         var old = atlas;
         atlas = next;
@@ -1054,7 +1122,8 @@ sealed class PetContext : ApplicationContext
         scale = newScale;
         pet.Scale = newScale;
         ForceRedraw();
-        old.Dispose();
+        lock (old) // a background rebuild may still be reading it
+            old.Dispose();
         if (icon is not null)
         {
             var oldIcon = tray.Icon;
@@ -1136,7 +1205,7 @@ sealed class PetContext : ApplicationContext
     {
         settings.Size = value;
         settings.Save();
-        RefreshMonitor(force: true);
+        RefreshMonitor(force: false); // rebuilds at the new size in the background
     }
 
     void ComeHere()
@@ -1166,7 +1235,7 @@ sealed class PetContext : ApplicationContext
         settings.StayPut = pet.StayPut;
         settings.Save();
 
-        timer.Stop();
+        frameClock?.Dispose();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemEvents.SessionEnding -= OnSessionEnding;
         tray.Visible = false;

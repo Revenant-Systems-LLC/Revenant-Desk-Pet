@@ -8,7 +8,7 @@ static class Program
         "idle", "fidget_tilt", "fidget_chest", "fidget_lean", "walk_right", "walk_left", "wave", "think", "shrug",
         "waiting", "jump", "held", "land", "failed", "working", "review", "doze_off", "sleeping", "wake",
         "evolve", "flex", "leap", "happy", "thrown", "float", "fidget_blink", "stretch",
-        "land_hard", "dizzy", "sit",
+        "land_hard", "dizzy", "sit", "air",
     ];
 
     [STAThread]
@@ -40,7 +40,8 @@ static class Program
         ApplicationConfiguration.Initialize();
 
         bool demo = args.Any(a => a.Equals("--demo", StringComparison.OrdinalIgnoreCase));
-        Log.Info($"start {typeof(Program).Assembly.GetName().Version} demo={demo}");
+        Perf.Enabled = args.Any(a => a.Equals("--perf", StringComparison.OrdinalIgnoreCase));
+        Log.Info($"start {typeof(Program).Assembly.GetName().Version} demo={demo} perf={Perf.Enabled}");
         try
         {
             var saved = Settings.Load();
@@ -112,6 +113,7 @@ static class Program
                 }
                 var resolved = AllClipNames.Select(n => $"{n}->{atlas.Clip(n).Name}{(atlas.Has(n) ? "" : "*")}");
                 Log.Info($"selftest ok: {name} look={atlas.HasLook} base={atlas.BaseScale} clips: {string.Join(' ', resolved)}");
+                Log.Info($"selftest physics ok: {name}: {PhysicsTest.Run(atlas)}");
             }
             return 0;
         }
