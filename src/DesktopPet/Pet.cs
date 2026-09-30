@@ -195,7 +195,7 @@ sealed class Pet
                 return;
             case Mode.Held or Mode.Falling:
                 return;
-            case Mode.Action when requested is "evolve" or "flex" or "leap" or "failed" or "dizzy":
+            case Mode.Action when requested is "evolve" or "flex" or "leap" or "failed" or "land_hard" or "dizzy":
                 return; // let the big ones finish
         }
         if (Chasing)
@@ -458,6 +458,7 @@ sealed class Pet
         Offer("shrug", 4);
         Offer("review", 5, Rand(3, 6));
         Offer("working", 3, Rand(3, 6));
+        Offer("sit", 4); // sits on the edge he stands on, legs dangling over it
         Offer("flex", 1.2);
         Offer("leap", 1.0);
         Offer("evolve", 0.8);
@@ -690,7 +691,10 @@ sealed class Pet
     {
         vx = vy = 0;
         Log.Info($"landed after {height:0}px");
-        if (height > 20 * Scale)
+        bool hard = height > HardFall * Scale && !selfMove;
+        // A drawn hard landing squashes him itself; don't squash it again in code.
+        bool drawnHard = hard && !dizzyPending && atlas.Has("land_hard");
+        if (height > 20 * Scale && !drawnHard)
         {
             landAt = now;
             landImpact = Math.Clamp(height / (SquashDrop * Scale), 0.2, 1);
@@ -698,7 +702,7 @@ sealed class Pet
         if (dizzyPending)
             StartDizzy();
         else
-            StartAction(height > HardFall * Scale && !selfMove ? "failed" : "land");
+            StartAction(drawnHard ? "land_hard" : hard ? "failed" : "land");
         dizzyPending = false;
         selfMove = false;
     }
@@ -1070,8 +1074,9 @@ sealed class Pet
             sy = 1 - k;
             sx = 1 + 0.6 * k;
         }
-        if (mode == Mode.Action && requested == "dizzy")
+        if (mode == Mode.Action && requested == "dizzy" && !atlas.Has("dizzy"))
         {
+            // code-made wobble, only while there's no drawn dizzy clip
             double td = now - dizzyAt;
             deg = DizzyTilt * Math.Sin(2 * Math.PI * 1.4 * td) * Math.Max(0, 1 - td / DizzySeconds);
         }

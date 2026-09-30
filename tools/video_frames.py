@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Cut a white-background character video into matted RGBA frames + metrics.
 
-    python tools/video_frames.py NAME VIDEO [--fix-eyes] [--v3] [--keep-white A-B]
+    python tools/video_frames.py NAME VIDEO [--fix-eyes] [--v3] [--keep-white A-B] [--key]
+
+--key: the video is on a flat magenta backdrop (plus, optionally, a flat green
+block): key on colour instead of finding the white background.
 
 --fix-eyes repaints cartoon eyes (white with a pupil) as RevBot's solid
 black eyes with the standard highlights; with --v3, the new design's single
@@ -223,6 +226,70 @@ def matte(crop, keep_big_white=False):
     return out.round().astype(np.uint8), keep, eyes
 
 
+# ---------------------------------------------------------------- colour key
+# The later videos (2026-09-28 on) are shot on flat magenta, and the sit video
+# adds a flat green block he sits on. Nothing of RevBot's is either colour: all
+# his colours have blue <= green (grey, white, black, orange, yellow) and
+# green <= red, so the key never has to guess what is background.
+
+def key_colour(c):
+    """0..1 per pixel: how much it looks like the magenta backdrop or the green block."""
+    c = c.astype(np.float32)
+    r, g, b = c[..., 0], c[..., 1], c[..., 2]
+    mag = np.clip((np.minimum(r, b) - g - 50) / 120, 0, 1)
+    grn = np.clip((g - np.maximum(r, b) - 50) / 120, 0, 1)
+    return mag, grn
+
+
+def rough_box_key(rgb):
+    mag, grn = key_colour(rgb[::2, ::2])
+    m = ndimage.binary_opening(np.maximum(mag, grn) < 0.5, iterations=2)   # drop grain specks
+    ys, xs = np.nonzero(m)
+    if len(xs) == 0:
+        return None
+    return 2 * xs.min(), 2 * ys.min(), 2 * xs.max() + 2, 2 * ys.max() + 2
+
+
+def matte_key(crop):
+    """Straight RGBA for a crop of a magenta-backdrop frame, plus the fg mask."""
+    c = crop.astype(np.float32)
+    mag, grn = key_colour(c)
+    k = np.maximum(mag, grn)
+    if (grn > 0.9).any():
+        # where the block meets the magenta the two blend into a grey-green seam
+        # that neither key catches (measured: R ~ B, R + G ~ 260-310)
+        near = ndimage.binary_dilation(mag > 0.9, iterations=5) & ndimage.binary_dilation(grn > 0.9, iterations=5)
+        s = c[..., 0] + c[..., 1]
+        k = np.where(near & (np.abs(c[..., 0] - c[..., 2]) < 40) & (s > 220) & (s < 330), 1.0, k)
+    alpha = 1 - k
+    solid = alpha > 0.5
+    lab, n = ndimage.label(solid)
+    if n == 0:
+        return None, None, []
+    sizes = ndimage.sum(solid, lab, range(1, n + 1))
+    keep = np.isin(lab, [i + 1 for i, s in enumerate(sizes) if s >= max(40, 0.002 * sizes.max())])
+    alpha = np.where(ndimage.binary_dilation(keep, iterations=2) & ~(solid & ~keep), alpha, 0)
+    # un-mix each soft edge from whichever backdrop it sits on
+    ref_m = np.median(c[mag > 0.95], 0) if (mag > 0.95).any() else np.array([255, 0, 255], np.float32)
+    ref_g = np.median(c[grn > 0.95], 0) if (grn > 0.95).any() else np.array([0, 255, 0], np.float32)
+    bgc = np.where((grn > mag)[..., None], ref_g, ref_m)
+    a = np.maximum(alpha, 0.05)[..., None]
+    fg = (c - (1 - a) * bgc) / a
+    # spill: whatever blue exceeds green is magenta (take it off red too), whatever
+    # green exceeds red is the block's green
+    ex = np.maximum(0, fg[..., 2] - fg[..., 1])
+    fg[..., 0] -= ex
+    fg[..., 2] -= ex
+    fg[..., 1] -= np.maximum(0, fg[..., 1] - fg[..., 0])
+    out = np.zeros(c.shape[:2] + (4,), np.float32)
+    out[..., :3] = np.clip(fg, 0, 255)
+    out[..., 3] = alpha * 255
+    ys, _ = np.nonzero(keep)
+    height = ys.max() - ys.min() + 1
+    eyes = eye_blobs(c.mean(2), keep, height)
+    return out.round().astype(np.uint8), keep, eyes
+
+
 def measure(keep, eyes, rgb):
     ys, xs = np.nonzero(keep)
     x0, y0, x1, y1 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
@@ -259,6 +326,7 @@ def main():
     FIX_EYES = "--fix-eyes" in sys.argv
     if "--v3" in sys.argv:
         HIGHLIGHTS = HIGHLIGHTS_V3
+    keyed = "--key" in sys.argv
     if len(args) != 2:
         raise SystemExit(__doc__)
     name, video = args[0], Path(args[1])
@@ -271,7 +339,7 @@ def main():
     ux1 = uy1 = -1
     diffs, prev = [], None
     for f in frames(video, w, h):
-        b = rough_box(f)
+        b = rough_box_key(f) if keyed else rough_box(f)
         if b:
             ux0, uy0, ux1, uy1 = min(ux0, b[0]), min(uy0, b[1]), max(ux1, b[2]), max(uy1, b[3])
         small = f[::8, ::8].astype(np.int16)
@@ -284,7 +352,7 @@ def main():
     metrics = []
     for i, f in enumerate(frames(video, w, h)):
         crop = f[box[1]:box[3], box[0]:box[2]]
-        rgba, keep, eyes = matte(crop, any(a <= i <= b for a, b in KEEP_WHITE))
+        rgba, keep, eyes = matte_key(crop) if keyed else matte(crop, any(a <= i <= b for a, b in KEEP_WHITE))
         if rgba is None:
             metrics.append(dict(index=i, empty=True))
             continue

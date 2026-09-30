@@ -41,6 +41,11 @@ VIDEOS = {
     "v3-sleep":     dict(file="revbot_sleep.mp4", ref=0, zoom="median"),
     "v3-celebrate": dict(file="revbot_celebrate.mp4", ref=0),
     "v3-stretch":   dict(file="gemini_generated_video_8820c9ab.mp4", ref=0, zoom="max"),   # head turns read narrow
+    # on magenta (cut with video_frames.py --key)
+    "v3-pickedup":  dict(file="revbot_pickedup.mp4", ref=0),
+    "v3-dizzy":     dict(file="revbot_dizzy.mp4", ref=0),
+    "v3-sit":       dict(file="revbot_sitting.mp4", ref=0),                     # green block keyed out too
+    "v3-360":       dict(file="gemini_generated_video_67967726.mp4", ref=0),    # legs stretch after frame ~30
 }
 
 
@@ -52,9 +57,16 @@ def pingpong(frames):
     return frames + frames[-2:0:-1]
 
 
-# name: (video, source frames in play order, fps, loop[, "flip"]). Frames are 24 fps
-# video frames; every 2nd one plays at 12 fps, which keeps the video's speed.
+def without(frames, *ranges):
+    """Frames minus the given (a, b) ranges: squints and glares he shouldn't make."""
+    return [f for f in frames if not any(a <= f <= b for a, b in ranges)]
+
+
+# name: (video, source frames in play order, fps, loop[, "flip"][, "rest"]). Frames are
+# 24 fps video frames; every 2nd one plays at 12 fps, which keeps the video's speed.
 # "flip" mirrors the frames: the walk video steps toward screen left.
+# "rest": anchor on the clip's own feet, not the reference frame's (he is lifted
+# off the ground in the video; in the pet the cursor holds him).
 CLIPS = {
     "idle":         ("v3-jump", pingpong(span(0, 54, 3)), 8, True),
     "fidget_blink": ("v3-jump", span(54, 72), 12, False),
@@ -77,7 +89,18 @@ CLIPS = {
     "sleeping":     ("v3-sleep", pingpong(span(90, 180, 3)), 8, True),
     "wake":         ("v3-sleep", span(184, 222), 12, False),
     "stretch":      ("v3-stretch", span(6, 30) + span(34, 178, 4) + span(182, 222), 12, False),
+    # magenta videos, 2026-09-28
+    "held":         ("v3-pickedup", "loop:56:140:20:56", 12, True, "rest"),   # dangling, kicking
+    "land_hard":    ("v3-pickedup", span(143, 152, 3) + span(182, 224, 3), 8, False),  # skips 155-179, eyes shut
+    "dizzy":        ("v3-dizzy", without(span(12, 96, 3), (38, 44), (94, 99)) + span(165, 192, 3), 8, False),
+    "sit":          ("v3-sit", span(36, 150, 3) + span(207, 237, 3), 8, False),   # skips 198-206, angry glare
 }
+
+# look: Atlas.LookDirections (16) poses, clockwise from straight up. The 360 video turns
+# him toward screen left; up to frame LOOK_MAX his legs keep their length. A direction's
+# sideways part picks how far round he turns; the right-hand side is the same frames
+# mirrored, and straight up and down face front.
+LOOK_VIDEO, LOOK_MAX, LOOK_DIRECTIONS = "v3-360", 28, 16
 
 
 # ---------------------------------------------------------------- frames
@@ -170,6 +193,20 @@ def placement(video):
 
 # ---------------------------------------------------------------- build
 
+def cut(video, f, s, ax, ground, flip=False):
+    """One frame, scaled and cropped, with its offset from the anchor."""
+    rgba = keep_robot(load(video, f), ground)
+    ys, xs = np.nonzero(rgba[..., 3] > 0)
+    x0, y0, x1, y1 = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
+    im = Image.fromarray(rgba[y0:y1, x0:x1], "RGBA").convert("RGBa")
+    im = im.resize((max(1, round(im.width * s)), max(1, round(im.height * s))), Image.LANCZOS).convert("RGBA")
+    ox, oy = int(round((x0 - ax) * s)), int(round((y0 - ground) * s))
+    if flip:
+        im = im.transpose(Image.FLIP_LEFT_RIGHT)
+        ox = -(ox + im.width)  # mirrored about the anchor
+    return np.array(im), ox, oy
+
+
 def main():
     rows = {}          # clip -> list of (rgba, ox, oy)
     clips = {}
@@ -182,22 +219,25 @@ def main():
         place = placement(video)
         unique = list(dict.fromkeys(frames))
         pos = {f: k for k, f in enumerate(unique)}
+        rest = None
+        if "rest" in spec[4:]:
+            m = metrics(video)
+            rest = float(np.median([m[f]["bbox"][3] for f in unique]))
         out = []
         for f in unique:
             s, ax, ground = place(f)
-            rgba = keep_robot(load(video, f), ground)
-            ys, xs = np.nonzero(rgba[..., 3] > 0)
-            x0, y0, x1, y1 = xs.min(), ys.min(), xs.max() + 1, ys.max() + 1
-            im = Image.fromarray(rgba[y0:y1, x0:x1], "RGBA").convert("RGBa")
-            im = im.resize((max(1, round(im.width * s)), max(1, round(im.height * s))), Image.LANCZOS).convert("RGBA")
-            ox, oy = int(round((x0 - ax) * s)), int(round((y0 - ground) * s))
-            if flip:
-                im = im.transpose(Image.FLIP_LEFT_RIGHT)
-                ox = -(ox + im.width)  # mirrored about the anchor
-            out.append((np.array(im), ox, oy))
+            out.append(cut(video, f, s, ax, ground if rest is None else rest, flip))
         rows[name] = out
         clips[name] = dict(row=name, frames=[pos[f] for f in frames], fps=fps, loop=loop)
         print(f"{name:13s} {video:13s} {len(frames):3d} steps, {len(unique):3d} frames")
+
+    # look: one image per distinct turn; the right-hand directions reuse them mirrored
+    place = placement(LOOK_VIDEO)
+    turns = [(round(LOOK_MAX * abs(np.sin(np.radians(360 / LOOK_DIRECTIONS * i)))), np.sin(np.radians(360 / LOOK_DIRECTIONS * i)) > 0.01)
+             for i in range(LOOK_DIRECTIONS)]
+    distinct = sorted({f for f, _ in turns})
+    rows["look"] = [cut(LOOK_VIDEO, f, *place(f)) for f in distinct]
+    print(f"{'look':13s} {LOOK_VIDEO:13s} {LOOK_DIRECTIONS:3d} directions from frames {distinct}")
 
     # pack
     placed = [(row, i, img, ox, oy) for row, fr in rows.items() for i, (img, ox, oy) in enumerate(fr)]
@@ -214,7 +254,13 @@ def main():
     frames = []
     for (row, idx, img, ox, oy), (px, py) in zip(placed, pos):
         atlas.paste(Image.fromarray(img, "RGBA"), (px, py))
-        frames.append(dict(row=row, index=idx, x=px, y=py, w=img.shape[1], h=img.shape[0], ox=ox, oy=oy))
+        if row != "look":
+            frames.append(dict(row=row, index=idx, x=px, y=py, w=img.shape[1], h=img.shape[0], ox=ox, oy=oy))
+    looks = {idx: (px, py, img, ox, oy) for (row, idx, img, ox, oy), (px, py) in zip(placed, pos) if row == "look"}
+    for i, (f, right) in enumerate(turns):
+        px, py, img, ox, oy = looks[distinct.index(f)]
+        # a mirrored frame keeps the unmirrored offset; Atlas mirrors it about the anchor
+        frames.append(dict(row="look", index=i, x=px, y=py, w=img.shape[1], h=img.shape[0], ox=ox, oy=oy, mirror=bool(right)))
 
     ASSETS.mkdir(parents=True, exist_ok=True)
     atlas.save(ASSETS / "atlas.png", optimize=True)

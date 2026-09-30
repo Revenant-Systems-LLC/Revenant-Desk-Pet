@@ -8,6 +8,7 @@ static class Program
         "idle", "fidget_tilt", "fidget_chest", "fidget_lean", "walk_right", "walk_left", "wave", "think", "shrug",
         "waiting", "jump", "held", "land", "failed", "working", "review", "doze_off", "sleeping", "wake",
         "evolve", "flex", "leap", "happy", "thrown", "float", "fidget_blink", "stretch",
+        "land_hard", "dizzy", "sit",
     ];
 
     [STAThread]
