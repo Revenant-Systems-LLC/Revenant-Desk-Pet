@@ -286,7 +286,12 @@ def matte_key(crop):
     out[..., 3] = alpha * 255
     ys, _ = np.nonzero(keep)
     height = ys.max() - ys.min() + 1
-    eyes = eye_blobs(c.mean(2), keep, height)
+    if FIX_EYES:
+        # cartoon eyes (white with a pupil) back to his solid black ones, on the un-mixed colours
+        rgb = out[..., :3].round().astype(np.int16)
+        if repaint_eyes(rgb, keep, height):
+            out[..., :3] = rgb
+    eyes = eye_blobs(out[..., :3].mean(2), keep, height)
     return out.round().astype(np.uint8), keep, eyes
 
 

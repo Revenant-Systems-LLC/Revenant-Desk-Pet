@@ -70,6 +70,8 @@ sealed class PetContext : ApplicationContext
     // Talking to the pet's own Claude (main pet only)
     ClaudeChat? chat;
     ChatBox? chatBox;
+    PermissionPrompt? prompt;                          // his Claude wants to change something: Yes / No
+    readonly Queue<ClaudeChat.Ask> asks = new();
     double dropSayUntil = double.NegativeInfinity; // his own Claude just finished: its Stop hook's "say" repeats the streamed reply
 
     // Watching you type: only "a key was pressed recently" (the cursor didn't
@@ -149,6 +151,16 @@ sealed class PetContext : ApplicationContext
                 bubble.Stream(text, done: false);
             };
             chat.ReplyDone += (text, _) => bubble.Stream(text, done: true);
+            chat.PermissionAsked += ask =>
+            {
+                asks.Enqueue(ask);
+                ShowNextAsk();
+            };
+            chat.AsksCleared += () =>
+            {
+                asks.Clear();
+                prompt?.Close();
+            };
         }
 
         frameClock = new FrameClock(window, () => OnTick(null, EventArgs.Empty));
@@ -286,6 +298,33 @@ sealed class PetContext : ApplicationContext
         chat.Warm(); // start his Claude now so it's ready when you press Enter
     }
 
+    /// <summary>One permission request at a time, over his head, until it's answered.</summary>
+    void ShowNextAsk()
+    {
+        if (prompt is not null || asks.Count == 0 || chat is null || quitting)
+            return;
+        var ask = asks.Dequeue();
+        var box = new PermissionPrompt(scale, ask.Question, ask.Detail);
+        box.Answered += yes =>
+        {
+            chat.Answer(ask.Id, yes);
+            Log.Info($"chat: {ask.Tool} {(yes ? "allowed" : "refused")}");
+            pet.Play(yes ? "happy" : "shrug");
+        };
+        box.FormClosed += (_, _) =>
+        {
+            if (ReferenceEquals(prompt, box))
+                prompt = null;
+            box.Dispose();
+            ShowNextAsk();
+        };
+        prompt = box;
+        if (lastSprite is Sprite s)
+            box.Place(lastX + (int)Math.Round(s.W * 0.5), lastY, pet.Work);
+        if (!hidden)
+            box.Show();
+    }
+
     /// <summary>Say something in a speech bubble above the pet (upper right), typed out a letter at a time.</summary>
     public void Say(string text)
     {
@@ -316,7 +355,7 @@ sealed class PetContext : ApplicationContext
         if (lastSprite is not Sprite s)
             return;
         int headX = lastX + (int)Math.Round(s.W * 0.78), headY = lastY + (int)Math.Round(s.H * 0.06);
-        bubble.Tick(t, !hidden && chatBox is null, headX, headY, scale, pet.Work);
+        bubble.Tick(t, !hidden && chatBox is null && prompt is null, headX, headY, scale, pet.Work);
     }
 
     void Render()
@@ -505,11 +544,13 @@ sealed class PetContext : ApplicationContext
                 break;
             case "PermissionRequest":
                 SessionHold(session, "waiting");           // hand up: needs your OK
-                AskForOk();
+                if (session != chat?.SessionId)
+                    AskForOk();                            // his own Claude's request is already up on screen
                 break;
             case "Notification" when type == "permission_prompt":
                 SessionHold(session, "waiting");
-                AskForOk();
+                if (session != chat?.SessionId)
+                    AskForOk();
                 break;
             case "Notification" when type == "idle_prompt":
                 aiSessions.Remove(session);
@@ -846,12 +887,14 @@ sealed class PetContext : ApplicationContext
             if (frameClock is not null)
                 frameClock.Slow = true;
             bubble.Hide();
+            prompt?.Hide(); // waits, unanswered, until he's back
             Log.Info("hidden: fullscreen app in front");
         }
         else if (!fullscreen && hidden)
         {
             hidden = false;
             window.Show();
+            prompt?.Show();
             ForceRedraw();
             if (frameClock is not null)
                 frameClock.Slow = false;
@@ -1300,6 +1343,7 @@ sealed class PetContext : ApplicationContext
 
         frameClock?.Dispose();
         chatBox?.Close();
+        prompt?.Close();
         chat?.Dispose();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemEvents.SessionEnding -= OnSessionEnding;

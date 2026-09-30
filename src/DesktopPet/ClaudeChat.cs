@@ -10,14 +10,19 @@ namespace DesktopPet;
 /// stream-json on stdout. It runs on the user's Claude Code login (no API key)
 /// and carries on the same conversation across restarts (--resume).
 ///
-/// Version one only reads: its built-in tools are Read, Grep, Glob, WebSearch
-/// and WebFetch, no MCP servers, and anything that would ask for permission is
-/// refused. Nothing said either way is ever logged, only lengths.
+/// It reads, searches and looks things up freely (Read, Grep, Glob, WebSearch,
+/// WebFetch). Anything else that needs permission, like writing or editing a file
+/// or running a command, is asked of the host, the pet, which puts up a Yes/No
+/// prompt (<see cref="PermissionAsked"/>, answered with <see cref="Answer"/>);
+/// the user's own Claude Code permission settings still apply. No MCP servers.
+/// Nothing said either way is ever logged, only lengths and tool names.
 /// Events are raised on the UI thread.
 /// </summary>
 sealed class ClaudeChat : IDisposable
 {
-    const string Tools = "Read,Grep,Glob,WebSearch,WebFetch";
+    const string ReadOnlyTools = "Read,Grep,Glob,WebSearch,WebFetch"; // allowed without asking
+    const string Tools = ReadOnlyTools + ",Edit,Write,NotebookEdit,Bash,PowerShell"; // the rest ask first
+    const string Mode = "ask-v2"; // what it may do; a change starts a new conversation (an old one remembers saying it couldn't)
     const double IdleSeconds = 600; // no messages this long: let the process go (it resumes next time)
 
     const string Prompt =
@@ -25,8 +30,12 @@ sealed class ClaudeChat : IDisposable
         "Your replies appear in a comic speech bubble above his head and type out a letter at a time, " +
         "so keep every reply short: one to three plain sentences. No markdown, no lists, no headings, " +
         "no code blocks, no emojis, no em dashes. If more detail would help, give the gist and offer the rest. " +
-        "In this mode you can only read (files, search, the web); you cannot edit, create, move or delete anything " +
-        "or run commands. If asked for a change, say briefly what you would do and that editing through the pet isn't switched on yet.";
+        "You can read, search and look things up freely. Anything that changes something, like writing or editing a file " +
+        "or running a command, asks the user first: a Yes/No prompt pops up on the pet and you wait for the answer. " +
+        "Say in a few words what you are about to do before you do it, and do one change at a time.";
+
+    /// <summary>A permission request waiting for Yes or No.</summary>
+    public sealed record Ask(string Id, string Tool, string Question, string? Detail);
 
     readonly Control ui;
     readonly Settings settings;
@@ -42,6 +51,12 @@ sealed class ClaudeChat : IDisposable
     public event Action<string>? ReplyGrowing;
     /// <summary>The reply is complete: its full text, and whether something went wrong.</summary>
     public event Action<string, bool>? ReplyDone;
+    /// <summary>Claude wants to do something that needs the user's OK: show it, then call <see cref="Answer"/>.</summary>
+    public event Action<Ask>? PermissionAsked;
+    /// <summary>The process went away: any prompts still up can go.</summary>
+    public event Action? AsksCleared;
+
+    readonly Dictionary<string, string> askInputs = new(); // request id -> the tool input (JSON), sent back unchanged on Yes
 
     public string? SessionId { get; private set; }
     /// <summary>A message is on its way or being answered.</summary>
@@ -53,6 +68,12 @@ sealed class ClaudeChat : IDisposable
     {
         this.ui = ui;
         this.settings = settings;
+        if (settings.ChatMode != Mode)
+        {
+            settings.ChatSession = null;
+            settings.ChatMode = Mode;
+            settings.Save();
+        }
         SessionId = settings.ChatSession;
     }
 
@@ -136,7 +157,8 @@ sealed class ClaudeChat : IDisposable
         foreach (string a in new[]
         {
             "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-            "--tools", Tools, "--allowedTools", Tools, "--strict-mcp-config", "--permission-prompts", "none",
+            "--tools", Tools, "--allowedTools", ReadOnlyTools, "--strict-mcp-config",
+            "--permission-prompts", "host", "--permission-prompt-tool", "stdio", // permission requests come to us
             "--name", "RevBot", "--append-system-prompt", Prompt,
         })
             psi.ArgumentList.Add(a);
@@ -153,6 +175,9 @@ sealed class ClaudeChat : IDisposable
         stdin = p.StandardInput;
         stdin.AutoFlush = false;
         Log.Info($"chat: started claude (pid {p.Id}){(resumed ? ", resuming its conversation" : ", new conversation")}");
+        // Say hello as its host first; without this it answers every permission request No by itself.
+        stdin.WriteLine("{\"type\":\"control_request\",\"request_id\":\"pet_init\",\"request\":{\"subtype\":\"initialize\"}}");
+        stdin.Flush();
         new Thread(() => ReadOut(p)) { IsBackground = true, Name = "chat stdout" }.Start();
         new Thread(() => DrainErr(p)) { IsBackground = true, Name = "chat stderr" }.Start();
     }
@@ -229,6 +254,9 @@ sealed class ClaudeChat : IDisposable
                     else if (e.TryGetProperty("event", out ev) && Str(ev, "type") == "content_block_start" && reply.Length > 0)
                         reply.Append(' '); // a new block after some text (text, a tool, more text): keep a gap
                     break;
+                case "control_request":
+                    OnControlRequest(e);
+                    break;
                 case "result":
                     bool error = e.TryGetProperty("is_error", out var ie) && ie.ValueKind == JsonValueKind.True;
                     string text = reply.ToString().Trim();
@@ -245,10 +273,74 @@ sealed class ClaudeChat : IDisposable
         }
     }
 
+    /// <summary>Yes or No to a permission request (from <see cref="PermissionAsked"/>).</summary>
+    public void Answer(string id, bool allow)
+    {
+        if (!askInputs.Remove(id, out string? input) || stdin is null)
+            return;
+        string response = allow
+            ? $"{{\"behavior\":\"allow\",\"updatedInput\":{input}}}"
+            : "{\"behavior\":\"deny\",\"message\":\"The user said no.\"}";
+        try
+        {
+            stdin.WriteLine($"{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"success\",\"request_id\":{JsonSerializer.Serialize(id)},\"response\":{response}}}}}");
+            stdin.Flush();
+        }
+        catch (Exception ex)
+        {
+            Log.Error("chat answer", ex);
+        }
+    }
+
+    void OnControlRequest(JsonElement e)
+    {
+        string? id = Str(e, "request_id");
+        if (id is null || !e.TryGetProperty("request", out var req))
+            return;
+        if (Str(req, "subtype") != "can_use_tool")
+        {
+            // nothing else is ours to handle: say so, so it doesn't wait on us
+            stdin?.WriteLine($"{{\"type\":\"control_response\",\"response\":{{\"subtype\":\"error\",\"request_id\":{JsonSerializer.Serialize(id)},\"error\":\"not supported by the desk pet\"}}}}");
+            stdin?.Flush();
+            return;
+        }
+        string tool = Str(req, "tool_name") ?? "a tool";
+        var input = req.TryGetProperty("input", out var i) ? i : default;
+        askInputs[id] = input.ValueKind == JsonValueKind.Object ? input.GetRawText() : "{}";
+        var (question, detail) = Describe(tool, Str(req, "display_name") ?? tool, Str(req, "description"), input);
+        Log.Info($"chat: asks permission for {tool}"); // not the path or command
+        PermissionAsked?.Invoke(new Ask(id, tool, question, detail));
+    }
+
+    /// <summary>The question to put to the user, and the exact thing (a full path or command) under it.</summary>
+    static (string Question, string? Detail) Describe(string tool, string display, string? description, JsonElement input)
+    {
+        string? path = Str(input, "file_path") ?? Str(input, "notebook_path") ?? Str(input, "path");
+        switch (tool)
+        {
+            case "Write" when path is not null:
+                return (File.Exists(path) ? "Can I overwrite this file?" : "Can I create this file?", path);
+            case "Edit" or "MultiEdit" or "NotebookEdit" when path is not null:
+                return ("Can I edit this file?", path);
+            case "Bash" or "PowerShell":
+                string cmd = Str(input, "command") ?? "";
+                return ("Can I run this command?", cmd.Length > 300 ? cmd[..300] + "..." : cmd);
+            case "WebFetch":
+                return ("Can I open this web page?", Str(input, "url"));
+            default:
+                return ($"Can I use {display}?", description ?? path);
+        }
+    }
+
     void OnExited(Process p)
     {
         if (!ReferenceEquals(p, proc))
             return;
+        if (askInputs.Count > 0)
+        {
+            askInputs.Clear();
+            AsksCleared?.Invoke();
+        }
         int code = p.HasExited ? p.ExitCode : -1;
         bool failedResume = resumed && !gotInit;
         proc = null;

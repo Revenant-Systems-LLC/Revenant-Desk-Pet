@@ -19,6 +19,8 @@ sealed class Settings
     public string ChatFolder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     /// <summary>That conversation's session id, so it carries on after a restart.</summary>
     public string? ChatSession { get; set; }
+    /// <summary>What that conversation was allowed to do; when the pet's chat mode changes, a new conversation starts.</summary>
+    public string? ChatMode { get; set; }
 
     /// <summary>"settings.json", or "settings.&lt;pet&gt;.json" for a friend pet.</summary>
     public static string FileName { get; set; } = "settings.json";

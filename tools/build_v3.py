@@ -46,6 +46,7 @@ VIDEOS = {
     "v3-dizzy":     dict(file="revbot_dizzy.mp4", ref=0),
     "v3-sit":       dict(file="revbot_sitting.mp4", ref=0),                     # green block keyed out too
     "v3-360":       dict(file="gemini_generated_video_67967726.mp4", ref=0),    # legs stretch after frame ~30
+    "v3-look":      dict(file="revbot_lookaround.mp4", ref=0),                  # cut with --key --fix-eyes --v3 (its "up" frames roll the eyes white)
 }
 
 
@@ -97,11 +98,14 @@ CLIPS = {
     "sit":          ("v3-sit", span(36, 150, 3) + span(207, 237, 3), 8, False),   # skips 198-206, angry glare
 }
 
-# look: Atlas.LookDirections (16) poses, clockwise from straight up. The 360 video turns
-# him toward screen left; up to frame LOOK_MAX his legs keep their length. A direction's
-# sideways part picks how far round he turns; the right-hand side is the same frames
-# mirrored, and straight up and down face front.
-LOOK_VIDEO, LOOK_MAX, LOOK_DIRECTIONS = "v3-360", 28, 16
+# look: Atlas.LookDirections (16) poses, clockwise from straight up, from the look-around
+# video (his head circles, his body stays still). Its left-hand side holds distinct poses
+# (tipped forward, level, tilted back); its right-hand side rolls his eyes white going up,
+# so the right is the left mirrored. (direction degrees: (frame, mirrored))
+LOOK_VIDEO = "v3-look"
+_LEFT = {180: 141, 202.5: 152, 225: 159, 247.5: 168, 270: 183, 292.5: 201, 315: 207, 337.5: 216}
+LOOK = {0: (36, False), **{360 - a: (f, True) for a, f in _LEFT.items() if a != 180}, **{a: (f, False) for a, f in _LEFT.items()}}
+LOOK_DIRECTIONS = 16
 
 
 # ---------------------------------------------------------------- frames
@@ -232,10 +236,9 @@ def main():
         clips[name] = dict(row=name, frames=[pos[f] for f in frames], fps=fps, loop=loop)
         print(f"{name:13s} {video:13s} {len(frames):3d} steps, {len(unique):3d} frames")
 
-    # look: one image per distinct turn; the right-hand directions reuse them mirrored
+    # look: one image per distinct pose; the right-hand directions reuse them mirrored
     place = placement(LOOK_VIDEO)
-    turns = [(round(LOOK_MAX * abs(np.sin(np.radians(360 / LOOK_DIRECTIONS * i)))), np.sin(np.radians(360 / LOOK_DIRECTIONS * i)) > 0.01)
-             for i in range(LOOK_DIRECTIONS)]
+    turns = [LOOK[360 / LOOK_DIRECTIONS * i] for i in range(LOOK_DIRECTIONS)]
     distinct = sorted({f for f, _ in turns})
     rows["look"] = [cut(LOOK_VIDEO, f, *place(f)) for f in distinct]
     print(f"{'look':13s} {LOOK_VIDEO:13s} {LOOK_DIRECTIONS:3d} directions from frames {distinct}")
