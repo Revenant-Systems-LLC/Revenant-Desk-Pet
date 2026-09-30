@@ -67,6 +67,10 @@ sealed class PetContext : ApplicationContext
     ToolStripMenuItem talkSoundItem = null!;
     readonly SpeechBubble bubble = new();
     double lastAskAt = double.NegativeInfinity;
+    // Talking to the pet's own Claude (main pet only)
+    ClaudeChat? chat;
+    ChatBox? chatBox;
+    double dropSayUntil = double.NegativeInfinity; // his own Claude just finished: its Stop hook's "say" repeats the streamed reply
 
     // Watching you type: only "a key was pressed recently" (the cursor didn't
     // move, yet there was input) and which program is in front. Never which keys.
@@ -138,6 +142,13 @@ sealed class PetContext : ApplicationContext
             {
                 Log.Error("ai link start", ex); // the pet works without it
             }
+            chat = new ClaudeChat(window, settings);
+            chat.ReplyGrowing += text =>
+            {
+                bubble.Sound = settings.TalkSounds;
+                bubble.Stream(text, done: false);
+            };
+            chat.ReplyDone += (text, _) => bubble.Stream(text, done: true);
         }
 
         frameClock = new FrameClock(window, () => OnTick(null, EventArgs.Empty));
@@ -220,6 +231,7 @@ sealed class PetContext : ApplicationContext
             }
             demo?.Tick(t);
             TickAiLink(t);
+            chat?.Tick();
             p = Perf.Now;
             pet.Tick(dt, cursor.X, cursor.Y, Native.IdleMilliseconds());
             Perf.Since("pet", p);
@@ -243,6 +255,35 @@ sealed class PetContext : ApplicationContext
         {
             Log.Error("tick", ex);
         }
+    }
+
+    /// <summary>Open the text box over his head (double-click, or the menu), focused so typing and dictation land in it.</summary>
+    void OpenChat()
+    {
+        if (chat is null || quitting)
+            return;
+        if (chatBox is { IsDisposed: false })
+        {
+            chatBox.Activate();
+            return;
+        }
+        var box = new ChatBox(scale, chat.LastReply);
+        box.Submitted += text =>
+        {
+            chat.Send(text);
+            pet.Play("think");
+        };
+        box.FormClosed += (_, _) =>
+        {
+            if (ReferenceEquals(chatBox, box))
+                chatBox = null;
+            box.Dispose();
+        };
+        chatBox = box;
+        if (lastSprite is Sprite s)
+            box.Place(lastX + (int)Math.Round(s.W * 0.5), lastY, pet.Work);
+        box.Show();
+        chat.Warm(); // start his Claude now so it's ready when you press Enter
     }
 
     /// <summary>Say something in a speech bubble above the pet (upper right), typed out a letter at a time.</summary>
@@ -275,7 +316,7 @@ sealed class PetContext : ApplicationContext
         if (lastSprite is not Sprite s)
             return;
         int headX = lastX + (int)Math.Round(s.W * 0.78), headY = lastY + (int)Math.Round(s.H * 0.06);
-        bubble.Tick(t, !hidden, headX, headY, scale, pet.Work);
+        bubble.Tick(t, !hidden && chatBox is null, headX, headY, scale, pet.Work);
     }
 
     void Render()
@@ -349,7 +390,7 @@ sealed class PetContext : ApplicationContext
     /// <summary>
     /// One line from the AI link, on the UI thread. Hook lines look like
     /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
-    /// direct commands are "say TEXT", "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "invite ID", "sendhome", "jumpup", "ledges", "clear" and "ping".
+    /// direct commands are "say TEXT", "talk" (open the chat box), "ask TEXT" (to his own Claude), "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "invite ID", "sendhome", "jumpup", "ledges", "clear" and "ping".
     /// </summary>
     void OnAiLine(string line)
     {
@@ -393,7 +434,19 @@ sealed class PetContext : ApplicationContext
             case "ping":
                 Log.Info("ai link ping");
                 break;
+            case "talk":
+                OpenChat();
+                break;
+            case "ask" when line.Length > 4 && chat is not null:
+                chat.Send(line[(line.IndexOf(' ') + 1)..]); // as if typed into the chat box
+                pet.Play("think");
+                break;
             case "say" when line.Length > 4:
+                if (clock.Elapsed.TotalSeconds < dropSayUntil)
+                {
+                    dropSayUntil = double.NegativeInfinity; // already said, as it streamed
+                    break;
+                }
                 Say(line[(line.IndexOf(' ') + 1)..]);
                 break;
             case "chase":
@@ -480,6 +533,8 @@ sealed class PetContext : ApplicationContext
                 break;
             }
             case "Stop":
+                if (chat?.SessionId == session)
+                    dropSayUntil = clock.Elapsed.TotalSeconds + 3;
                 aiSessions.Remove(session);
                 ApplyAiHold(immediate: true);
                 pet.Play("happy");                         // done (falls back to a jump); others' state resumes after
@@ -828,6 +883,12 @@ sealed class PetContext : ApplicationContext
         if (e.Button != MouseButtons.Left)
             return;
         Native.GetCursorPos(out var c);
+        if (e.Clicks >= 2 && chat is not null)
+        {
+            pressed = dragging = false; // the second click of a double-click: talk, don't poke again
+            OpenChat();
+            return;
+        }
         pressed = true;
         dragging = false;
         pressAt = c;
@@ -1028,6 +1089,8 @@ sealed class PetContext : ApplicationContext
             terrainItem,
             new ToolStripMenuItem("Come here", null, (_, _) => ComeHere()),
         });
+        if (friendOf is null)
+            m.Items.Insert(2, new ToolStripMenuItem("Talk to Claude...", null, (_, _) => window.BeginInvoke(OpenChat)));
         extendMenu?.Invoke(m, this);
         m.Items.AddRange(new ToolStripItem[]
         {
@@ -1236,6 +1299,8 @@ sealed class PetContext : ApplicationContext
         settings.Save();
 
         frameClock?.Dispose();
+        chatBox?.Close();
+        chat?.Dispose();
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         SystemEvents.SessionEnding -= OnSessionEnding;
         tray.Visible = false;

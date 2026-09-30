@@ -15,6 +15,10 @@ sealed class Settings
     public bool Terrain { get; set; } = true;
     /// <summary>Letters click as a speech bubble types out.</summary>
     public bool TalkSounds { get; set; } = true;
+    /// <summary>Where the pet's own Claude Code conversation runs (its working folder).</summary>
+    public string ChatFolder { get; set; } = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+    /// <summary>That conversation's session id, so it carries on after a restart.</summary>
+    public string? ChatSession { get; set; }
 
     /// <summary>"settings.json", or "settings.&lt;pet&gt;.json" for a friend pet.</summary>
     public static string FileName { get; set; } = "settings.json";

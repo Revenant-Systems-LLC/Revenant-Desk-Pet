@@ -15,6 +15,7 @@ sealed class SpeechBubble : IDisposable
 {
     const double CharsPerSecond = 16; // Dave: readable, like the old Animal Crossing boxes (30 too fast, 12 too slow)
     const int MaxLineChars = 400;
+    const int MaxStreamChars = 500; // a reply from the pet's own Claude (the full text is in the chat box)
 
     readonly BubbleWindow window = new();
     readonly LayeredSurface surface = new();
@@ -22,6 +23,9 @@ sealed class SpeechBubble : IDisposable
     readonly Queue<string> queue = new();
 
     string? text;            // the line being shown
+    string? stream;          // a reply arriving piece by piece: all of it so far
+    bool streamOpen;         // more of it is coming
+    bool showingStream;      // `text` is that reply
     List<string> lines = new(); // it, already broken into lines for the current size
     int shown;               // letters typed so far
     double nextCharAt, hideAt;
@@ -36,19 +40,51 @@ sealed class SpeechBubble : IDisposable
     public bool Sound { get; set; } = true;
 
     /// <summary>A line is showing (or waiting).</summary>
-    public bool Busy => text is not null || queue.Count > 0;
+    public bool Busy => text is not null || queue.Count > 0 || stream is not null;
 
     public void Say(string line)
     {
-        line = string.Join(' ', line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)); // one line, single spaces
-        if (line.Length == 0)
-            return;
-        if (line.Length > MaxLineChars)
+        line = Normalize(line, MaxLineChars);
+        if (line.Length > 0)
+            queue.Enqueue(line);
+    }
+
+    /// <summary>
+    /// A reply arriving as it's written: <paramref name="soFar"/> is all of it so
+    /// far, <paramref name="done"/> once it's complete. It types out as it comes
+    /// (after any lines already waiting), and only starts its reading time once done.
+    /// </summary>
+    public void Stream(string soFar, bool done)
+    {
+        stream = Normalize(soFar, MaxStreamChars);
+        streamOpen = !done;
+        if (stream.Length == 0 && done)
         {
-            int cut = char.IsHighSurrogate(line[MaxLineChars - 1]) ? MaxLineChars - 1 : MaxLineChars; // never half an emoji
+            stream = null;
+            if (showingStream)
+            {
+                showingStream = false;
+                text = null;
+                Hide();
+            }
+            return;
+        }
+        if (showingStream)
+        {
+            text = stream;
+            layoutScale = -1; // re-wrap; the typing carries on where it was
+        }
+    }
+
+    static string Normalize(string line, int max)
+    {
+        line = string.Join(' ', line.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)); // one line, single spaces
+        if (line.Length > max)
+        {
+            int cut = char.IsHighSurrogate(line[max - 1]) ? max - 1 : max; // never half an emoji
             line = line[..cut].TrimEnd() + "...";
         }
-        queue.Enqueue(line);
+        return line;
     }
 
     /// <summary>
@@ -61,9 +97,15 @@ sealed class SpeechBubble : IDisposable
     {
         if (text is null)
         {
-            if (queue.Count == 0)
+            if (queue.Count > 0)
+                text = queue.Dequeue();
+            else if (stream is { Length: > 0 })
+            {
+                text = stream;
+                showingStream = true;
+            }
+            else
                 return;
-            text = queue.Dequeue();
             shown = 0;
             nextCharAt = now + 0.12;
             hideAt = double.PositiveInfinity;
@@ -96,11 +138,16 @@ sealed class SpeechBubble : IDisposable
                 _ => 1 / CharsPerSecond,
             };
         }
-        if (shown == text.Length && double.IsPositiveInfinity(hideAt))
-            hideAt = now + Math.Min(7, 1.8 + 0.045 * text.Length); // time to read it
+        if (shown == text.Length && double.IsPositiveInfinity(hideAt) && !(showingStream && streamOpen))
+            hideAt = now + Math.Min(showingStream ? 12 : 7, 1.8 + 0.045 * text.Length); // time to read it
         if (now >= hideAt)
         {
             text = null;
+            if (showingStream)
+            {
+                showingStream = false;
+                stream = null;
+            }
             Hide();
             return;
         }
