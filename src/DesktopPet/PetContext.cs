@@ -476,6 +476,10 @@ sealed class PetContext : ApplicationContext
             case "talk":
                 OpenChat();
                 break;
+            case "climb":
+                if (!pet.ClimbUp())
+                    Log.Info("nothing to climb up onto");
+                break;
             case "ask" when line.Length > 4 && chat is not null:
                 chat.Send(line[(line.IndexOf(' ') + 1)..]); // as if typed into the chat box
                 pet.Play("think");

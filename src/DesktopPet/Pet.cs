@@ -9,6 +9,7 @@ enum Mode
     Falling,  // dropped or thrown: coming down under gravity, or a floating pet drifting to a stop
     Asleep,   // user is away, or told to nap
     Hold,     // an outside caller pinned a state (the future AI hook)
+    Climb,    // climbing the side of a window too tall to jump onto
 }
 
 /// <summary>
@@ -59,6 +60,10 @@ sealed class Pet
     const double SwingDamping = 3.0;    // 1/s
     const double SwingDrive = 0.35;     // how hard the cursor's acceleration pushes him (1 = a real pendulum, which pins at the limit on any quick drag)
     const double SwingMax = 35;         // degrees either way
+    // Climbing (drawn clips climb_start, climb, climb_top): windows too tall to jump onto.
+    const double ClimbSpeed = 75;       // px/s up the side
+    const double ClimbReach = 900;      // px; the tallest climb
+    const double ClimbInset = 30;       // px inside the window's edge: he climbs its face, near the side
 
     Atlas atlas;
     readonly Random rng = new();
@@ -83,6 +88,10 @@ sealed class Pet
     double ownerLeft, ownerTop; // where that window was, to ride along when it moves
     int ownerMovedVersion = -1; // terrain refresh during which that window last moved
     Ledge? jumpFor;             // walking to a take-off spot, then jumping up onto this ledge
+    Ledge? climbFor;            // walking to the side of a window, then climbing it
+    Ledge climbing;             // the ledge being climbed to (Mode.Climb)
+    int climbPhase;             // 0 grabbing the wall, 1 climbing, 2 over the top
+    bool climbLeftHand;         // the wall is to his left (he climbs the window's right side)
     bool selfMove;              // this fall is his own jump or step off: no drag, no fall-apart
     double clipRate = 1;        // animation speed (running in chase mode)
     double walkRate = 1;        // walk frames' rate for his current speed
@@ -185,14 +194,14 @@ sealed class Pet
         holdClip = name;
         Log.Info($"state held: {name}");
         // While a one-off clip plays, let it finish; AfterAction enters the hold.
-        if (mode is not (Mode.Held or Mode.Falling or Mode.Action))
+        if (mode is not (Mode.Held or Mode.Falling or Mode.Action or Mode.Climb))
             EnterHold();
     }
 
     /// <summary>Play a clip once; looping clips run for a few seconds.</summary>
     public void Play(string name)
     {
-        if (mode is Mode.Held or Mode.Falling)
+        if (mode is Mode.Held or Mode.Falling or Mode.Climb)
             return;
         napping = waking = false;
         StartAction(name, atlas.Clip(name).Loop ? 4.0 : null);
@@ -217,7 +226,7 @@ sealed class Pet
                 napping = false;
                 Wake();
                 return;
-            case Mode.Held or Mode.Falling:
+            case Mode.Held or Mode.Falling or Mode.Climb:
                 return;
             case Mode.Action when requested is "evolve" or "flex" or "leap" or "failed" or "land_hard" or "dizzy":
                 return; // let the big ones finish
@@ -236,7 +245,7 @@ sealed class Pet
 
     public void Nap()
     {
-        if (mode is Mode.Held or Mode.Falling || !CanSleep)
+        if (mode is Mode.Held or Mode.Falling or Mode.Climb || !CanSleep)
             return;
         StartSleep();
         napping = true;
@@ -271,7 +280,7 @@ sealed class Pet
     /// <summary>Jump up onto a nearby window top, if there is one in reach (the AI link's "jumpup").</summary>
     public bool JumpUp()
     {
-        if (mode is Mode.Held or Mode.Falling || Floats || Terrain is not { } t || PickJumpTarget(t) is not Ledge g)
+        if (mode is Mode.Held or Mode.Falling or Mode.Climb || Floats || Terrain is not { } t || PickJumpTarget(t) is not Ledge g)
             return false;
         napping = waking = false;
         StartJumpTo(g);
@@ -292,7 +301,7 @@ sealed class Pet
     public void BeginDrag(double gripDx = 0, double gripDy = 0)
     {
         ToTaskbar(); // measured from the taskbar while held, wherever it was standing
-        jumpFor = null;
+        jumpFor = climbFor = null;
         takeoff = null;
         (this.gripDx, this.gripDy) = (gripDx, gripDy);
         swing = swingV = 0;
@@ -358,7 +367,7 @@ sealed class Pet
         work = newWork;
         standingOn = IntPtr.Zero;
         floorY = work.Bottom;
-        jumpFor = null;
+        jumpFor = climbFor = null;
         selfMove = false;
         X = x;
         ClampX();
@@ -435,6 +444,7 @@ sealed class Pet
                 break;
             case Mode.Falling: TickFall(dt); break;
             case Mode.Asleep: TickSleep(idleMs); break;
+            case Mode.Climb: TickClimb(dt); break;
         }
         if (Chasing && mode is Mode.Idle or Mode.Walk)
             SteerChase();
@@ -442,7 +452,7 @@ sealed class Pet
             clipRate = 1;
         if (mode == Mode.Walk && !Floats)
             clipRate = walkRate; // feet keep pace with how fast he's moving
-        if (mode is not (Mode.Held or Mode.Falling))
+        if (mode is not (Mode.Held or Mode.Falling or Mode.Climb))
             KeepFooting();
         if (Floats && mode is not (Mode.Held or Mode.Falling))
         {
@@ -526,6 +536,8 @@ sealed class Pet
         {
             if (PickJumpTarget(terrain) is Ledge up)
                 options.Add((() => StartJumpTo(up), 14));
+            if (PickClimbTarget(terrain) is Ledge high)
+                options.Add((() => StartClimbTo(high), 6));
             if (standingOn != IntPtr.Zero)
                 options.Add((StepOffEdge, 5));
         }
@@ -552,9 +564,9 @@ sealed class Pet
 
     void WalkTo(double target)
     {
-        if (mode is Mode.Held or Mode.Falling)
+        if (mode is Mode.Held or Mode.Falling or Mode.Climb)
             return;
-        jumpFor = null;
+        jumpFor = climbFor = null;
         visiting = false;
         if (Math.Abs(target - X) < 20 * Scale)
         {
@@ -610,9 +622,15 @@ sealed class Pet
                 ArriveAtFriend();
                 return;
             }
+            if (climbFor is Ledge c)
+            {
+                climbFor = null;
+                BeginClimb(c);
+                return;
+            }
             if (jumpFor is Ledge g)
             {
-                jumpFor = null;
+                jumpFor = climbFor = null;
                 Launch(g);
                 return;
             }
@@ -885,7 +903,7 @@ sealed class Pet
     /// <summary>Crouch for a moment, then leave the ground with this velocity (see <see cref="Tick"/>).</summary>
     void StartTakeoff(double tvx, double tvy)
     {
-        jumpFor = null;
+        jumpFor = climbFor = null;
         napping = waking = false;
         lookIndex = null;
         takeoff = (tvx, tvy);
@@ -1071,7 +1089,7 @@ sealed class Pet
         ToTaskbar();
         vx = mode == Mode.Walk ? walkDir * WalkSpeed * Scale : 0;
         vy = 0;
-        jumpFor = null;
+        jumpFor = climbFor = null;
         selfMove = true;
         fallFrom = Lift;
         napping = waking = false;
@@ -1159,6 +1177,133 @@ sealed class Pet
         var (up, flight) = SolveJump(h + 45 * Scale, h); // peak a little above the ledge
         StartTakeoff((landX - X) / flight, -up);
         Log.Info($"jump up {h:0}px onto a window");
+    }
+
+    // ------------------------------------------------------------ climbing
+
+    /// <summary>Climb a window too tall to jump onto, if there's one in reach (the AI link's "climb").</summary>
+    public bool ClimbUp()
+    {
+        if (mode is Mode.Held or Mode.Falling or Mode.Climb || Floats || Terrain is not { } t || PickClimbTarget(t) is not Ledge g)
+            return false;
+        napping = waking = false;
+        StartClimbTo(g);
+        return true;
+    }
+
+    /// <summary>A window top too high to jump to but not too high to climb, with a side he can walk to.</summary>
+    Ledge? PickClimbTarget(ITerrain t)
+    {
+        if (Floats || !atlas.Has("climb") || !atlas.Has("climb_top"))
+            return null;
+        var (lo, hi) = WalkSpan();
+        var candidates = new List<Ledge>();
+        foreach (var g in t.Ledges)
+        {
+            double rise = floorY - g.Y;
+            var (left, right) = ClimbSpots(g);
+            if (rise > JumpReach * Scale && rise <= ClimbReach * Scale && right - left >= 30 * Scale && LedgeFits(g.Y) && hi > lo &&
+                ((left >= lo && left <= hi) || (right >= lo && right <= hi)))
+                candidates.Add(g);
+        }
+        return candidates.Count > 0 ? candidates[rng.Next(candidates.Count)] : null;
+    }
+
+    /// <summary>Where he climbs a window: just inside its left or right side.</summary>
+    (double Left, double Right) ClimbSpots(Ledge g) =>
+        (Math.Max(g.Left, work.Left) + ClimbInset * Scale, Math.Min(g.Right, work.Right) - ClimbInset * Scale);
+
+    void StartClimbTo(Ledge g)
+    {
+        var (lo, hi) = WalkSpan();
+        var (left, right) = ClimbSpots(g);
+        bool leftOk = left >= lo && left <= hi, rightOk = right >= lo && right <= hi;
+        climbLeftHand = rightOk && (!leftOk || Math.Abs(right - X) < Math.Abs(left - X)); // the right side: the wall is to his left
+        double spot = climbLeftHand ? right : left;
+        if (Math.Abs(spot - X) < 12 * Scale)
+        {
+            X = spot;
+            BeginClimb(g);
+            return;
+        }
+        WalkTo(spot);
+        if (mode == Mode.Walk)
+            climbFor = g; // after WalkTo, which clears it
+    }
+
+    void BeginClimb(Ledge g)
+    {
+        // The window may have moved or closed on the way.
+        if (Terrain is not { } t || !t.TryGetTop(g.Owner, out _, out _, out double top) || Math.Abs(top - g.Y) > 3)
+        {
+            GoIdle();
+            return;
+        }
+        climbing = g;
+        climbPhase = 0;
+        mode = Mode.Climb;
+        lookIndex = null;
+        napping = waking = false;
+        PlayClip(climbLeftHand && atlas.Has("climb_start_left") ? "climb_start_left" : "climb_start");
+        Log.Info($"climbing {floorY - g.Y:0}px up a window");
+    }
+
+    /// <summary>
+    /// Grab the wall, climb (the loop; the code lifts him), then over the top. The
+    /// pull-over frames are anchored on the window's edge, so the switch happens where
+    /// the top of his head lines up in both.
+    /// </summary>
+    void TickClimb(double dt)
+    {
+        if (Terrain is not { } t || !t.TryGetTop(climbing.Owner, out double wl, out double wr, out double top))
+        {
+            FallFromClimb("the window went away");
+            return;
+        }
+        climbing = climbing with { Y = top }; // it may have moved
+        if (climbPhase < 2)
+            X = climbLeftHand ? Math.Min(wr, work.Right) - ClimbInset * Scale : Math.Max(wl, work.Left) + ClimbInset * Scale;
+        else
+            floorY = top;
+        switch (climbPhase)
+        {
+            case 0:
+                if (ClipDone)
+                {
+                    climbPhase = 1;
+                    PlayClip("climb");
+                }
+                break;
+            case 1:
+                Lift += ClimbSpeed * Scale * dt;
+                int loopTop = atlas.FrameTop("climb", 0) ?? 0, overTop = atlas.FrameTop("climb_top", 0) ?? 0;
+                double endAnchor = top + (overTop - loopTop) * Scale; // head tops level: loop at endAnchor, pull-over at the ledge
+                if (Lift >= floorY - endAnchor)
+                {
+                    SetFloor(top, climbing.Owner);
+                    Lift = 0;
+                    climbPhase = 2;
+                    PlayClip("climb_top");
+                }
+                break;
+            case 2:
+                if (ClipDone)
+                {
+                    Log.Info("climbed onto a window");
+                    GoIdle(1.5, 4);
+                }
+                break;
+        }
+    }
+
+    void FallFromClimb(string why)
+    {
+        Log.Info($"off the climb ({why})");
+        vx = vy = 0;
+        selfMove = false;
+        fallFrom = Lift;
+        mode = Mode.Falling;
+        PlayClip("held");
     }
 
     /// <summary>Walk to just past the nearer end of this ledge, and drop off.</summary>
@@ -1268,7 +1413,7 @@ sealed class Pet
 
     void StartSleep()
     {
-        jumpFor = null;
+        jumpFor = climbFor = null;
         mode = Mode.Asleep;
         waking = napping = false;
         lookIndex = null;
@@ -1344,7 +1489,7 @@ sealed class Pet
 
     void StartAction(string name, double? loopSeconds = null)
     {
-        jumpFor = null;
+        jumpFor = climbFor = null;
         if (name == "dizzy")
             dizzyAt = now;
         mode = Mode.Action;
@@ -1364,7 +1509,7 @@ sealed class Pet
 
     void EnterHold()
     {
-        jumpFor = null;
+        jumpFor = climbFor = null;
         mode = Mode.Hold;
         napping = waking = false;
         lookIndex = null;
@@ -1373,7 +1518,7 @@ sealed class Pet
 
     void GoIdle(double minDelay = 2, double maxDelay = 6)
     {
-        jumpFor = null;
+        jumpFor = climbFor = null;
         if (holdClip is not null)
         {
             EnterHold();

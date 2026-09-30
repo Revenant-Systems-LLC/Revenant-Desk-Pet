@@ -41,6 +41,11 @@ static class PhysicsTest
             notes.Add(JumpOnto(atlas, startX: 900, "straight up"));
             notes.Add(JumpOnto(atlas, startX: 600, "across"));
             notes.Add(ChaseHop(atlas));
+            if (atlas.Has("climb"))
+            {
+                notes.Add(ClimbOnto(atlas, startX: 600, "from the left"));
+                notes.Add(ClimbOnto(atlas, startX: 1500, "from the right"));
+            }
         }
         notes.Add(Swing(atlas));
         return string.Join("; ", notes);
@@ -94,6 +99,42 @@ static class PhysicsTest
         Check(Math.Abs(pet.GroundY - ledge.Y) < 1, $"jump {how}: landed on {pet.GroundY:0}, not the ledge at {ledge.Y:0} (x {pet.X:0}, peak {top:0} px)");
         Check(pet.X >= ledge.Left && pet.X <= ledge.Right, $"jump {how}: landed at x {pet.X:0}, off the ledge");
         return $"jump {how} ok ({t:0.00} s, peak {top:0} px, x {pet.X:0})";
+    }
+
+    static string ClimbOnto(Atlas atlas, double startX, string how)
+    {
+        var terrain = new FakeTerrain();
+        var ledge = new Ledge(850, 1250, Work.Bottom - 520, 2); // too tall to jump onto
+        terrain.List.Add(ledge);
+        var pet = NewPet(atlas, startX);
+        pet.Terrain = terrain;
+        Check(pet.ClimbUp(), $"climb {how}: no climb started");
+        bool climbed = false;
+        double t = 0, maxStep = 0;
+        double? prevTop = null;
+        string? prevRow = null;
+        for (; t < 30; t += Dt)
+        {
+            pet.Tick(Dt, -5000, -5000, 0);
+            CheckPose(pet, $"climb {how}");
+            climbed |= pet.Mode == Mode.Climb;
+            // where the top of the drawn frame is on screen: from the climb loop into the
+            // pull-over it must carry on, not jump (the anchor itself does jump: the loop
+            // is pinned by his head, the pull-over by the window's edge)
+            double top = pet.AnchorY + (atlas.TopOf(pet.Frame) ?? 0) * pet.Scale;
+            if (prevTop is double pt && prevRow == "climb" && pet.Frame.Row == "climb_top")
+                maxStep = Math.Max(maxStep, Math.Abs(top - pt));
+            prevTop = top;
+            prevRow = pet.Frame.Row;
+            if (climbed && pet.Mode != Mode.Climb)
+                break;
+        }
+        Check(climbed, $"climb {how}: never started climbing");
+        Check(pet.Mode != Mode.Falling, $"climb {how}: fell off");
+        Check(Math.Abs(pet.GroundY - ledge.Y) < 1, $"climb {how}: ended on {pet.GroundY:0}, not the ledge at {ledge.Y:0}");
+        Check(pet.X >= ledge.Left && pet.X <= ledge.Right, $"climb {how}: ended at x {pet.X:0}, off the ledge");
+        Check(maxStep < 40, $"climb {how}: jumped {maxStep:0} px going over the top");
+        return $"climb {how} ok ({t:0.0} s, x {pet.X:0}, {maxStep:0} px shift going over the top)";
     }
 
     static string ChaseHop(Atlas atlas)

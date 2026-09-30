@@ -47,6 +47,7 @@ VIDEOS = {
     "v3-sit":       dict(file="revbot_sitting.mp4", ref=0),                     # green block keyed out too
     "v3-360":       dict(file="gemini_generated_video_67967726.mp4", ref=0),    # legs stretch after frame ~30
     "v3-look":      dict(file="revbot_lookaround.mp4", ref=0),                  # cut with --key --fix-eyes --v3 (its "up" frames roll the eyes white)
+    "v3-climb2":     dict(file="revbot_climbing2.mp4", ref=232),                 # the camera zooms in by frame 24, then only rises with him: one scale from 24 on
 }
 
 
@@ -68,6 +69,9 @@ def without(frames, *ranges):
 # "flip" mirrors the frames: the walk video steps toward screen left.
 # "rest": anchor on the clip's own feet, not the reference frame's (he is lifted
 # off the ground in the video; in the pet the cursor holds him).
+# "headlock": pin the top of his head (a climb loop: the camera rose with him).
+# "ledge": anchor on the green block's top edge in each frame (metrics "ledge"):
+# the pull-over lines up with the window top he climbs onto.
 CLIPS = {
     "idle":         ("v3-jump", pingpong(span(0, 54, 3)), 8, True),
     "fidget_blink": ("v3-jump", span(54, 72), 12, False),
@@ -93,6 +97,12 @@ CLIPS = {
     # magenta videos, 2026-09-28
     "held":         ("v3-pickedup", "loop:56:140:20:56", 12, True, "rest"),   # dangling, kicking
     "air":          ("v3-jump", pingpong(span(111, 126, 3)), 12, True, "rest"),   # his own jumps, arms up (the physics lifts him)
+    # climbing a window too tall to jump onto (2026-09-30): turn to the wall and grab it,
+    # climb (loop, seen from behind), then over the top edge and turn round on it
+    "climb_start":  ("v3-climb2", span(26, 46), 12, False, "rest"),
+    "climb_start_left": ("v3-climb2", span(26, 46), 12, False, "rest", "flip"),
+    "climb":        ("v3-climb2", "loop:48:152:16:60", 12, True, "headlock"),
+    "climb_top":    ("v3-climb2", span(154, 238, 2), 12, False, "ledge"),
     "land_hard":    ("v3-pickedup", span(143, 152, 3) + span(182, 224, 3), 8, False),  # skips 155-179, eyes shut
     "dizzy":        ("v3-dizzy", without(span(12, 96, 3), (38, 44), (94, 99)) + span(165, 192, 3), 8, False),
     "sit":          ("v3-sit", span(36, 150, 3) + span(207, 237, 3), 8, False),   # skips 198-206, angry glare
@@ -224,14 +234,23 @@ def main():
         place = placement(video)
         unique = list(dict.fromkeys(frames))
         pos = {f: k for k, f in enumerate(unique)}
-        rest = None
+        m = metrics(video)
+        rest = lock = None
         if "rest" in spec[4:]:
-            m = metrics(video)
             rest = float(np.median([m[f]["bbox"][3] for f in unique]))
+        if "headlock" in spec[4:]:
+            lock = float(np.median([m[f]["height"] for f in unique]))
+        steady_x = float(np.median([m[f]["head_cx"] for f in unique]))
         out = []
         for f in unique:
             s, ax, ground = place(f)
-            out.append(cut(video, f, s, ax, ground if rest is None else rest, flip))
+            if rest is not None:
+                ground = rest
+            elif lock is not None:
+                ax, ground = steady_x, m[f]["bbox"][1] + lock   # head top stays put; x keeps his sway
+            elif "ledge" in spec[4:]:
+                ax, ground = VIDEOS[video].get("ledge_x", place(VIDEOS[video]["ref"])[1]), m[f]["ledge"]
+            out.append(cut(video, f, s, ax, ground, flip))
         rows[name] = out
         clips[name] = dict(row=name, frames=[pos[f] for f in frames], fps=fps, loop=loop)
         print(f"{name:13s} {video:13s} {len(frames):3d} steps, {len(unique):3d} frames")

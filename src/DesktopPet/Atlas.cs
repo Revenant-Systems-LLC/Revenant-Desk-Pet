@@ -93,6 +93,18 @@ sealed class Atlas : IDisposable
         HasLook = hasLook;
     }
 
+    /// <summary>The top of the frame a clip shows at <paramref name="step"/>, relative to its anchor, in sheet pixels (times the display scale on screen); null if there's no such frame.</summary>
+    public int? FrameTop(string clip, int step)
+    {
+        if (!manifest.Clips.TryGetValue(clip, out var c) || step < 0 || step >= c.Frames.Length)
+            return null;
+        return manifest.Frames.FirstOrDefault(f => f.Row == c.Row && f.Index == c.Frames[step])?.Oy;
+    }
+
+    /// <summary>The top of one frame (row, index) relative to its anchor, in sheet pixels.</summary>
+    public int? TopOf((string Row, int Index) frame) =>
+        manifest.Frames.FirstOrDefault(f => f.Row == frame.Row && f.Index == frame.Index)?.Oy;
+
     /// <summary>True if the pet has this animation itself (not via a fallback).</summary>
     public bool Has(string name) => manifest.Clips.ContainsKey(name);
 

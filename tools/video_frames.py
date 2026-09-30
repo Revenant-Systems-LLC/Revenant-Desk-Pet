@@ -233,12 +233,20 @@ def matte(crop, keep_big_white=False):
 # green <= red, so the key never has to guess what is background.
 
 def key_colour(c):
-    """0..1 per pixel: how much it looks like the magenta backdrop or the green block."""
+    """0..1 per pixel: how much it looks like the magenta backdrop or the green block,
+    scaled to this frame's own backdrop: a video may render the green duller (the second
+    climb video's wall is (29, 150, 48), green 102 above the rest, not 220) or the magenta
+    softer. The 20th percentile of the strong pixels is the reference, so a frame with a
+    bright floor and a dull wall keys both."""
     c = c.astype(np.float32)
     r, g, b = c[..., 0], c[..., 1], c[..., 2]
-    mag = np.clip((np.minimum(r, b) - g - 50) / 120, 0, 1)
-    grn = np.clip((g - np.maximum(r, b) - 50) / 120, 0, 1)
-    return mag, grn
+
+    def scaled(excess):
+        strong = excess[excess > 60]
+        full = max(80.0, float(np.percentile(strong, 20))) if strong.size > 500 else 220.0
+        return np.clip((excess - 0.25 * full) / (0.55 * full), 0, 1)
+
+    return scaled(np.minimum(r, b) - g), scaled(g - np.maximum(r, b))
 
 
 def rough_box_key(rgb):
@@ -257,10 +265,10 @@ def matte_key(crop):
     k = np.maximum(mag, grn)
     if (grn > 0.9).any():
         # where the block meets the magenta the two blend into a grey-green seam
-        # that neither key catches (measured: R ~ B, R + G ~ 260-310)
+        # that neither key catches (measured: R ~ B, R + G ~ 260-310 on bright green, ~220 on dull)
         near = ndimage.binary_dilation(mag > 0.9, iterations=5) & ndimage.binary_dilation(grn > 0.9, iterations=5)
         s = c[..., 0] + c[..., 1]
-        k = np.where(near & (np.abs(c[..., 0] - c[..., 2]) < 40) & (s > 220) & (s < 330), 1.0, k)
+        k = np.where(near & (np.abs(c[..., 0] - c[..., 2]) < 40) & (s > 170) & (s < 340), 1.0, k)
     alpha = 1 - k
     solid = alpha > 0.5
     lab, n = ndimage.label(solid)
@@ -364,6 +372,13 @@ def main():
         Image.fromarray(rgba, "RGBA").save(dest / "frames" / f"{i:04d}.png", optimize=False, compress_level=3)
         m = measure(keep, eyes, crop)
         m.update(index=i, cut=round(diffs[i], 2))
+        if keyed:
+            # the green block's top edge (a ledge he climbs onto), if there is one: the
+            # first row that is green across at least a fifth of the crop
+            _, grn = key_colour(crop.astype(np.float32))
+            rows = np.nonzero((grn > 0.9).mean(1) > 0.2)[0]
+            if len(rows):
+                m.update(ledge=int(rows[0]))
         metrics.append(m)
 
     info = dict(video=str(video), size=[w, h], fps=fps, crop=list(box), touches=touches, frames=metrics)
