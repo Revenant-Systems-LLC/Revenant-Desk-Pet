@@ -5,8 +5,9 @@ fidgets, watches the mouse cursor, naps when you step away, and hides itself
 whenever a fullscreen app or game is in front of it.
 
 He is one pet with several bodies: the desktop (this app), your Claude Code
-terminal (`mod/revbot`, see "RevBot in the terminal"), and PowerShell
-(`shell/RevBot.psm1`). The desktop pet owns his state and his conversation;
+terminal (`mod/revbot`, see "RevBot in the terminal"), PowerShell
+(`shell/RevBot.psm1`), and a web page the pet serves on this PC
+(http://localhost:7474/). The desktop pet owns his state and his conversation;
 the other bodies show the same pet and talk to him through it. Where it's
 going (a web body, an LLM inside, a detachable arm, mech mode, and more) is in
 [ROADMAP.md](ROADMAP.md).
@@ -146,6 +147,17 @@ desktop app's Code tab included) with `CLAUDE_CODE_PLUGIN_DIRS` in
 Details and options: [mod/revbot/README.md](mod/revbot/README.md). His
 terminal frames come from `python toolsuild_cells.py` (rerun after the art
 changes).
+
+### RevBot in the browser
+
+The pet serves one page on `http://localhost:7474/` (menu: Open in browser;
+`WebEnabled` and `WebPort` in `settings.json`). It draws him from the same
+sprite sheet the desktop uses, animating whatever clip `state.json` names,
+shows what he is doing and saying and which bodies he is in, and has a chat
+box that asks his brain and prints the answer. Only connections from this PC
+are answered, and writes need the page's own header and origin, so another
+site cannot make him talk or spend his Claude. Each open tab counts as a body
+until 45 seconds after it closes.
 
 ### RevBot in PowerShell
 

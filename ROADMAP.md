@@ -25,13 +25,15 @@ then the AI moving between them depending on what you are doing.
   and showing what the desktop pet says; a PowerShell module
   (`shell/RevBot.psm1`) draws him, asks his Claude and prints the answers,
   and prefixes the prompt with his face and state.
-- Next: a web body (a local page served by the pet, same state file and
-  pipe, so a browser tab or a phone on the LAN shows the same pet); the
-  hand-off, where he visibly travels (walks to the terminal window and goes
-  in when a terminal body appears, climbs back out when it closes), kept
-  opt-in so he never vanishes from the desk by surprise; one shared memory
-  so what you told him in one body he knows in the next; "where is the
-  user" (active window, idle time) deciding which body speaks.
+- Built 2026-10-10: the hand-off ("Follow me into the terminal", opt-in): he
+  walks to the terminal window, hops in, and drops back out of it when the
+  session ends or the window closes. The web body: a page on
+  http://localhost:7474/ drawn from his real sprite sheet, with chat.
+- Next: one shared memory so what you told him in one body he knows in the
+  next; "where is the user" (active window, idle time) deciding which body
+  speaks; the web body reachable from a phone on the LAN (needs an explicit
+  opt-in, a pairing code, and a firewall rule Dave adds himself); voice
+  (0b below).
 
 ## 0b. Voice (Dave, 2026-10-09: "pretty damn good speech-to-text")
 
