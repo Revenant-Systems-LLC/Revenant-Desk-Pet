@@ -27,9 +27,10 @@ $script:OldPrompt = $null
 function Get-RevBotHome {
     <# The folder holding DesktopPet.exe, hook\revbot-hook.exe and state.json. #>
     if ($env:REVBOT_HOME) { return $env:REVBOT_HOME }
-    $dist = Join-Path (Split-Path $PSScriptRoot -Parent) 'dist'
-    if (Test-Path (Join-Path $dist 'DesktopPet.exe')) { return (Resolve-Path $dist).Path }
-    return $dist
+    $parent = Split-Path $PSScriptRoot -Parent
+    foreach ($dir in @($parent, (Join-Path $parent 'dist'))) {   # dist\shell\ (deployed) or <repo>\shell        if (Test-Path (Join-Path $dir 'DesktopPet.exe')) { return (Resolve-Path $dir).Path }
+    }
+    return (Join-Path $parent 'dist')
 }
 
 function Get-RevBotState {

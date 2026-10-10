@@ -12,13 +12,12 @@ PowerShell and later the web. "Clippy 2.0 but not annoying."
   works alone when the pet is not running.
 
 ## Tonight, in order
-- [ ] 1. Pet writes `state.json` (clip, hold, mood, saying, sessions, surfaces)
-- [ ] 2. Pet: `surface` verb, presence registry, hand-off: go into the terminal
-        window when a terminal body appears, come back out when it leaves
-- [ ] 3. `tools/build_cells.py`: atlas clips -> half-block cell frames (JSON)
-- [ ] 4. Claude Code mod `revbot`: Spinner + AbovePrompt band draw RevBot,
+- [x] 1. Pet writes `state.json` (clip, hold, mood, saying, sessions, surfaces)
+- [x] 2. Pet: `surface` verb, presence registry (hand-off deferred: opt-in, see roadmap 0)
+- [x] 3. `tools/build_cells.py`: atlas clips -> half-block cell frames (JSON)
+- [x] 4. Claude Code mod `revbot`: Spinner + AbovePrompt band draw RevBot,
         state from turn/tool events, announces presence over the pipe
-- [ ] 5. PowerShell: `shell/RevBot.psm1` (prompt sprite + state, `revbot` cmds)
+- [x] 5. PowerShell: `shell/RevBot.psm1` (prompt sprite + state, `revbot` cmds)
 - [ ] 6. Console body `revbot.exe` (animated terminal pet + chat) if time allows
 - [ ] 7. README/ROADMAP, merge to main, push
 - [ ] 8. Fold in the market research (docs/MARKET-RESEARCH.md, PRODUCT-PLAN.md)
