@@ -42,6 +42,9 @@ sealed class SpeechBubble : IDisposable
     /// <summary>A line is showing (or waiting).</summary>
     public bool Busy => text is not null || queue.Count > 0 || stream is not null;
 
+    /// <summary>The line on screen right now (all of it, not just the letters typed so far), or null.</summary>
+    public string? Saying => text;
+
     public void Say(string line)
     {
         line = Normalize(line, MaxLineChars);

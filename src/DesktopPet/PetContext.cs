@@ -45,6 +45,16 @@ sealed class PetContext : ApplicationContext
     const double AiWaitingQuietSeconds = 1800; // but a pending permission prompt can wait a long time
     const double AiMinDwellSeconds = 1.2;      // stop rapid tool calls flickering between animations
 
+    // His other bodies (the Claude Code terminal mod, the PowerShell prompt, a web page later):
+    // they announce themselves over the AI link and read state.json.
+    readonly StateFile stateFile;
+    sealed class Surface
+    {
+        public double Since, LastAt;
+    }
+    readonly Dictionary<string, Surface> surfaces = new();
+    const double SurfaceQuietSeconds = 1800;   // a body silent this long has gone without saying so
+
     Dictionary<(string Row, int Index), Sprite> sprites = new();
     double scale = -1;
     double buildingScale = -1;   // a background rebuild for this scale is running
@@ -105,6 +115,7 @@ sealed class PetContext : ApplicationContext
         this.friendOf = friendOf;
         this.atlas = atlas;
         this.petId = petId;
+        stateFile = new StateFile(friendOf is null ? "state.json" : $"state.{petId}.json");
         this.title = title;
         this.extendMenu = extendMenu;
         pet = new Pet(atlas) { StayPut = settings.StayPut, Demo = demoMode, MonitorAt = MonitorAt };
@@ -178,6 +189,8 @@ sealed class PetContext : ApplicationContext
                 CheckFullscreen();
                 Perf.Since("fullscreen", p);
             }
+            stateFile.Update(Snapshot(), t);
+            stateFile.Tick(t);
             if (hidden)
                 return;
 
@@ -614,6 +627,9 @@ sealed class PetContext : ApplicationContext
             case "ping":
                 Log.Info("ai link ping");
                 break;
+            case "surface" when arg is not null:
+                OnSurface(arg.ToLowerInvariant(), parts.Length > 2 ? parts[2].ToLowerInvariant() : "on", kv);
+                break;
             case "talk":
                 OpenChat();
                 break;
@@ -666,6 +682,48 @@ sealed class PetContext : ApplicationContext
                 break;
         }
     }
+
+    /// <summary>
+    /// Another body of his came or went: "surface terminal on session=ID",
+    /// "surface powershell on pid=N", "surface terminal off session=ID". A body
+    /// repeats "on" now and then as a heartbeat. He greets a new one.
+    /// </summary>
+    void OnSurface(string name, string onOff, Dictionary<string, string> kv)
+    {
+        string id = kv.GetValueOrDefault("session") ?? kv.GetValueOrDefault("pid") ?? "default";
+        string key = $"{name}:{new string(id.Where(char.IsAsciiLetterOrDigit).ToArray())}";
+        double t = clock.Elapsed.TotalSeconds;
+        if (onOff == "off")
+        {
+            if (surfaces.Remove(key))
+                Log.Info($"surface gone: {key} ({surfaces.Count} left)");
+            return;
+        }
+        if (surfaces.TryGetValue(key, out var s))
+        {
+            s.LastAt = t;
+            return;
+        }
+        surfaces[key] = new Surface { Since = t, LastAt = t };
+        Log.Info($"surface here: {key} ({surfaces.Count} now)");
+        if (!hidden)
+            pet.Play("wave"); // he sees himself in a new place
+    }
+
+    /// <summary>The moment for state.json: what his other bodies need to show the same pet.</summary>
+    StateFile.Snapshot Snapshot() => new(
+        Pet: petId,
+        Clip: pet.Frame.Row,
+        Mode: pet.Mode.ToString(),
+        Hold: pet.HeldState,
+        Claude: AggregateHold() ?? "idle",
+        Sessions: aiSessions.Count,
+        Saying: bubble.Saying,
+        Where: "desktop",
+        Surfaces: string.Join(',', surfaces.Keys.Order()),
+        X: (int)Math.Round(pet.X),
+        Y: (int)Math.Round(pet.GroundY),
+        Hidden: hidden);
 
     void OnHook(string hookEvent, string session, string? tool, string? type)
     {
@@ -830,6 +888,11 @@ sealed class PetContext : ApplicationContext
         }
         if (pendingAiHold is not null && t - aiHoldChangedAt >= AiMinDwellSeconds)
             ApplyAiHold(immediate: true);
+        foreach (var key in surfaces.Where(kv => t - kv.Value.LastAt > SurfaceQuietSeconds).Select(kv => kv.Key).ToList())
+        {
+            surfaces.Remove(key);
+            Log.Info($"surface quiet, stood down: {key}");
+        }
     }
 
     static string Trim(string s) => s.Length > 60 ? s[..60] : s;
@@ -1502,6 +1565,7 @@ sealed class PetContext : ApplicationContext
         settings.Y = savedY;
         settings.StayPut = pet.StayPut;
         settings.Save();
+        stateFile.Clear();
 
         frameClock?.Dispose();
         chatBox?.Close();

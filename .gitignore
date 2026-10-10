@@ -24,3 +24,7 @@ Secrets.env
 *.key
 *.pem
 config.local.*
+state.json
+state.*.json
+state.json.tmp
+state.*.json.tmp
