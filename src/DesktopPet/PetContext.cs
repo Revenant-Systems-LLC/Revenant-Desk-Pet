@@ -54,6 +54,7 @@ sealed class PetContext : ApplicationContext
     }
     readonly Dictionary<string, Surface> surfaces = new();
     const double SurfaceQuietSeconds = 1800;   // a body silent this long has gone without saying so
+    const double TerminalQuietSeconds = 45;    // a terminal body heartbeats every 15 s; a killed session never says goodbye
     string? lastReply;                         // his chat's last complete answer, for the other bodies
     int replyCount;                            // bumps on every answer, so a body can tell a new one
     // Following him into another body (opt-in, settings.FollowSurfaces): when a terminal
@@ -1071,10 +1072,14 @@ sealed class PetContext : ApplicationContext
         }
         if (pendingAiHold is not null && t - aiHoldChangedAt >= AiMinDwellSeconds)
             ApplyAiHold(immediate: true);
-        foreach (var key in surfaces.Where(kv => t - kv.Value.LastAt > SurfaceQuietSeconds).Select(kv => kv.Key).ToList())
+        foreach (var key in surfaces.Where(kv => t - kv.Value.LastAt > (kv.Key.StartsWith("terminal:", StringComparison.Ordinal) ? TerminalQuietSeconds : SurfaceQuietSeconds)).Select(kv => kv.Key).ToList())
         {
             surfaces.Remove(key);
             Log.Info($"surface quiet, stood down: {key}");
+            if (awayTo == key)
+                ComeBack();
+            if (goingTo == key)
+                StopFollowing();
         }
     }
 

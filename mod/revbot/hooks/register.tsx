@@ -19,7 +19,7 @@ const TICK_MS = 1000 / 12 // the fastest clip is 12 fps
 const FIDGET_MIN_MS = 6000
 const FIDGET_MAX_MS = 14000
 const SLEEP_AFTER_MS = 5 * 60 * 1000
-const HEARTBEAT_MS = 5 * 60 * 1000
+const HEARTBEAT_MS = 15 * 1000 // the pet stands a terminal body down after 45 s of silence (a killed session never says goodbye)
 const SAYING_POLL_MS = 1500
 
 // What the drawings read. A change here redraws the band and the spinner.
