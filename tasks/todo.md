@@ -13,14 +13,15 @@ PowerShell and later the web. "Clippy 2.0 but not annoying."
 
 ## Tonight, in order
 - [x] 1. Pet writes `state.json` (clip, hold, mood, saying, sessions, surfaces)
-- [x] 2. Pet: `surface` verb, presence registry (hand-off deferred: opt-in, see roadmap 0)
+- [x] 2. Pet: `surface` verb, presence registry, opt-in hand-off (Follow me into the terminal)
 - [x] 3. `tools/build_cells.py`: atlas clips -> half-block cell frames (JSON)
 - [x] 4. Claude Code mod `revbot`: Spinner + AbovePrompt band draw RevBot,
         state from turn/tool events, announces presence over the pipe
 - [x] 5. PowerShell: `shell/RevBot.psm1` (prompt sprite + state, `revbot` cmds)
-- [ ] 6. Console body `revbot.exe` (animated terminal pet + chat) if time allows
-- [ ] 7. README/ROADMAP, merge to main, push
-- [ ] 8. Fold in the market research (docs/MARKET-RESEARCH.md, PRODUCT-PLAN.md)
+- [ ] 6. Console body `revbot.exe` (animated terminal pet + chat) if time allows (not started)
+- [x] 7. README/ROADMAP, merge to main, push (main fast-forwarded and pushed; deployed to M:\Projects\Desktop-Pet\dist)
+- [x] 8. Fold in the market research (docs/MARKET-RESEARCH.md, PRODUCT-PLAN.md)
+- [x] 9. Web body on http://localhost:7474/ (added mid-session)
 
 ## Rules in force
 - No deletes. No edits outside M:\ and the .claude carve-out.
@@ -28,4 +29,5 @@ PowerShell and later the web. "Clippy 2.0 but not annoying."
 - Secrets never in the repo.
 
 ## Review
-(filled in at the end)
+All of 1-5, 7-9 built, tested and pushed to main; 6 (a standalone console
+body) not started. Next steps and what waits on Dave: HANDOFF.md.
