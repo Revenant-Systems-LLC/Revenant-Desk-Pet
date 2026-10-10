@@ -25,6 +25,7 @@ sealed class StateFile
         int ReplyCount,      // how many answers so far: a body waits for this to change
         string? Brain,       // who he talks with ("Claude", "llama3.1:8b"), or null
         string Where,        // which body shows him: "desktop", "terminal:<session>", ...
+        string? Web,         // his page, e.g. "http://localhost:7474/", or null when off
         string Surfaces,     // every body that announced itself, comma separated
         int X,               // feet on screen, physical pixels
         int Y,
@@ -101,6 +102,7 @@ sealed class StateFile
                 replyCount = s.ReplyCount,
                 brain = s.Brain,
                 where = s.Where,
+                web = s.Web,
                 surfaces = s.Surfaces.Length == 0 ? Array.Empty<string>() : s.Surfaces.Split(','),
                 x = s.X,
                 y = s.Y,

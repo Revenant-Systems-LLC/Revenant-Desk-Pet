@@ -134,6 +134,9 @@ sealed class Atlas : IDisposable
         ? kind switch { "png" => "atlas.png", "json" => "atlas.json", _ => "pet.ico" }
         : kind switch { "png" => $"{pet}.atlas.png", "json" => $"{pet}.atlas.json", _ => $"{pet}.ico" };
 
+    /// <summary>The embedded resource holding a built-in pet's sheet ("png"), manifest ("json") or icon ("ico").</summary>
+    public static string ResourceName(string pet, string kind) => Resource(IsBuiltIn(pet) ? pet : "revbot", kind);
+
     /// <summary>A built-in pet (default RevBot), built by the tools/ scripts and embedded in the exe.</summary>
     public static Atlas Load(string pet = "revbot")
     {

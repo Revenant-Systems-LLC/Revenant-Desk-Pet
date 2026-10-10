@@ -30,6 +30,7 @@ sealed class PetContext : ApplicationContext
 
     // AI link: Claude Code hooks (via revbot-hook.exe) and direct commands
     AiLink? aiLink;
+    WebBody? web;                // his page on localhost (main pet only)
     /// <summary>What one Claude Code session is doing; the pet shows the most important across sessions.</summary>
     sealed class AiSession
     {
@@ -177,6 +178,8 @@ sealed class PetContext : ApplicationContext
             {
                 Log.Error("ai link start", ex); // the pet works without it
             }
+            if (settings.WebEnabled)
+                web = WebBody.TryStart(Math.Clamp(settings.WebPort, 1024, 65535), OnAiLine, () => petId, stateFile.Path_);
             UseBrain(settings.ChatBrain, announce: false);
             Rescan();
         }
@@ -748,7 +751,8 @@ sealed class PetContext : ApplicationContext
             return;
         if (settings.FollowSurfaces && friendOf is null && name == "terminal" && goingTo is null && StartFollowing(key))
             return;
-        pet.Play("wave"); // he sees himself in a new place
+        if (name != "web" || surfaces.Count(kv => kv.Key.StartsWith("web:", StringComparison.Ordinal)) == 1)
+            pet.Play("wave"); // he sees himself in a new place (a page polling again after a reload is not news)
     }
 
     /// <summary>
@@ -895,6 +899,7 @@ sealed class PetContext : ApplicationContext
         ReplyCount: replyCount,
         Brain: chat?.Name,
         Where: awayTo ?? "desktop",
+        Web: web?.Url,
         Surfaces: string.Join(',', surfaces.Keys.Order()),
         X: (int)Math.Round(pet.X),
         Y: (int)Math.Round(pet.GroundY),
@@ -1072,7 +1077,7 @@ sealed class PetContext : ApplicationContext
         }
         if (pendingAiHold is not null && t - aiHoldChangedAt >= AiMinDwellSeconds)
             ApplyAiHold(immediate: true);
-        foreach (var key in surfaces.Where(kv => t - kv.Value.LastAt > (kv.Key.StartsWith("terminal:", StringComparison.Ordinal) ? TerminalQuietSeconds : SurfaceQuietSeconds)).Select(kv => kv.Key).ToList())
+        foreach (var key in surfaces.Where(kv => t - kv.Value.LastAt > (kv.Key.StartsWith("terminal:", StringComparison.Ordinal) || kv.Key.StartsWith("web:", StringComparison.Ordinal) ? TerminalQuietSeconds : SurfaceQuietSeconds)).Select(kv => kv.Key).ToList())
         {
             surfaces.Remove(key);
             Log.Info($"surface quiet, stood down: {key}");
@@ -1554,6 +1559,8 @@ sealed class PetContext : ApplicationContext
             brainMenu.DropDownOpening += (_, _) => FillBrainMenu();
             m.Items.Insert(2, new ToolStripMenuItem("Talk...", null, (_, _) => window.BeginInvoke(OpenChat)));
             m.Items.Insert(3, brainMenu);
+            if (web is not null || settings.WebEnabled)
+                m.Items.Insert(4, new ToolStripMenuItem("Open in browser", null, (_, _) => OpenWeb()));
         }
         extendMenu?.Invoke(m, this);
         m.Items.AddRange(new ToolStripItem[]
@@ -1624,6 +1631,24 @@ sealed class PetContext : ApplicationContext
 
     /// <summary>The settings this context saves on exit; change them here so nothing is lost.</summary>
     public Settings Settings => settings;
+
+    /// <summary>His page, in the default browser.</summary>
+    void OpenWeb()
+    {
+        if (web is null)
+        {
+            Notify($"The web body is off (port {settings.WebPort} may be taken); see logs\\pet.log.");
+            return;
+        }
+        try
+        {
+            Process.Start(new ProcessStartInfo(web.Url) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            Log.Error("open web", ex);
+        }
+    }
 
     /// <summary>A short message from the tray icon.</summary>
     public void Notify(string text) => tray.ShowBalloonTip(5000, title, text, ToolTipIcon.Info);
@@ -1787,6 +1812,7 @@ sealed class PetContext : ApplicationContext
             window.Dispose();
         }
         aiLink?.Dispose();
+        web?.Dispose();
         bubble.Dispose();
         surface.Dispose();
         atlas.Dispose();

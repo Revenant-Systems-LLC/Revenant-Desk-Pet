@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RevBot</title>
+<link rel="icon" href="/icon">
+<style>
+  :root { --bg: #111417; --panel: #181d22; --ink: #e8e4d8; --dim: #8e9096; --gold: #d6b25e; --jade: #2f9e7d; --line: #2a3138; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, "Segoe UI", sans-serif; }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  header { display: flex; align-items: baseline; gap: 10px; }
+  header h1 { margin: 0; font-size: 20px; color: var(--gold); letter-spacing: .02em; }
+  header .doing { color: var(--dim); }
+  .stage { position: relative; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; justify-content: center; align-items: flex-end; min-height: 240px; }
+  canvas { image-rendering: auto; max-width: 100%; height: auto; }
+  .bubble { position: absolute; right: 14px; top: 14px; max-width: 60%; background: #fffdf5; color: #222; border-radius: 14px; padding: 10px 12px; font-size: 14px; box-shadow: 0 2px 10px #0006; opacity: 0; transition: opacity .25s; }
+  .bubble.on { opacity: 1; }
+  .bubble:after { content: ""; position: absolute; left: -8px; bottom: 10px; border: 8px solid transparent; border-right-color: #fffdf5; border-left: 0; }
+  .where { color: var(--dim); font-size: 13px; }
+  .where b { color: var(--jade); font-weight: 600; }
+  form { display: flex; gap: 8px; }
+  input[type=text] { flex: 1; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-size: 15px; }
+  button { padding: 10px 14px; border-radius: 10px; border: 1px solid var(--line); background: #20262c; color: var(--ink); font-size: 14px; cursor: pointer; }
+  button.gold { border-color: var(--gold); color: var(--gold); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .log { display: flex; flex-direction: column; gap: 8px; }
+  .msg { padding: 8px 12px; border-radius: 10px; max-width: 85%; }
+  .msg.you { align-self: flex-end; background: #243036; }
+  .msg.him { align-self: flex-start; background: #1f2a26; border-left: 3px solid var(--jade); }
+  .msg.wait { color: var(--dim); font-style: italic; }
+  footer { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+<main>
+  <header><h1 id="name">RevBot</h1><span class="doing" id="doing">loading</span></header>
+  <div class="stage">
+    <canvas id="pet" width="300" height="320"></canvas>
+    <div class="bubble" id="bubble"></div>
+  </div>
+  <div class="where" id="where"></div>
+  <form id="chat" autocomplete="off">
+    <input type="text" id="text" placeholder="Say something to him" maxlength="500">
+    <button type="submit" class="gold">Ask</button>
+  </form>
+  <div class="row">
+    <button type="button" data-play="wave">Wave</button>
+    <button type="button" data-play="jump">Jump</button>
+    <button type="button" data-play="happy">Celebrate</button>
+    <button type="button" data-play="think">Think</button>
+    <button type="button" data-say="Hello from the web!">Say hi</button>
+  </div>
+  <div class="log" id="log"></div>
+  <footer>Served by the desktop pet on this PC only. This tab is one of his bodies while it is open.</footer>
+</main>
+<script>
+(() => {
+  const client = Math.random().toString(36).slice(2, 14) + Date.now().toString(36);
+  const $ = id => document.getElementById(id);
+  const canvas = $('pet'), ctx = canvas.getContext('2d');
+  let atlas = null, sheet = null, frames = new Map(), box = null;
+  let state = null, clip = 'idle', clipStart = performance.now(), lastReplyCount = null, waiting = false;
+
+  // His art: the manifest and the sheet the desktop pet itself uses. The sheet is
+  // big (tens of MB), so a failed or interrupted load is retried rather than given up on.
+  async function loadArt() {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        const m = await (await fetch('/atlas.json', { cache: 'no-cache' })).json();
+        const map = new Map(m.frames.map(f => [f.row + '#' + f.index, f]));
+        let l = Infinity, t = Infinity, r = -Infinity, b = -Infinity;
+        for (const f of m.frames) { l = Math.min(l, f.ox); t = Math.min(t, f.oy); r = Math.max(r, f.ox + f.w); b = Math.max(b, f.oy + f.h); }
+        const img = new Image();
+        img.src = '/atlas.png';
+        await img.decode();
+        atlas = m; frames = map; box = { l, t, w: r - l, h: b - t }; sheet = img;
+        canvas.width = box.w; canvas.height = box.h;
+        canvas.style.width = Math.min(box.w, 320) + 'px';
+        return;
+      } catch (e) {
+        $('bubble').textContent = 'loading his art... (' + attempt + ')';
+        $('bubble').classList.add('on');
+        await new Promise(res => setTimeout(res, Math.min(2000 * attempt, 10000)));
+      }
+    }
+  }
+
+  function clipFor(name) {
+    const c = atlas.clips;
+    const alt = { wave: ['happy', 'jump'], happy: ['jump', 'wave'], shrug: ['think'], waiting: ['think'], review: ['think'], working: ['think'], held: ['jump'], failed: ['land'], walk_left: ['walk_right'], look: ['idle'] };
+    if (c[name]) return c[name];
+    for (const a of (alt[name] || [])) if (c[a]) return c[a];
+    return c.idle;
+  }
+
+  function draw(now) {
+    requestAnimationFrame(draw);
+    if (!atlas || !sheet) return;
+    const c = clipFor(clip);
+    const n = c.frames.length;
+    let i = Math.floor(((now - clipStart) / 1000) * c.fps);
+    i = c.loop ? i % n : Math.min(i, n - 1);
+    const f = frames.get(c.row + '#' + c.frames[i]);
+    if (!f) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const x = f.ox - box.l, y = f.oy - box.t;
+    if (f.mirror) {
+      ctx.save(); ctx.translate(canvas.width, 0); ctx.scale(-1, 1);
+      ctx.drawImage(sheet, f.x, f.y, f.w, f.h, canvas.width - x - f.w, y, f.w, f.h);
+      ctx.restore();
+    } else {
+      ctx.drawImage(sheet, f.x, f.y, f.w, f.h, x, y, f.w, f.h);
+    }
+  }
+
+  function doingWords(s) {
+    if (!s || !s.running) return 'is away (start the desktop pet)';
+    if (s.claude === 'waiting') return 'needs your OK on something';
+    if (s.claude === 'working') return 'is hammering away for Claude';
+    if (s.claude === 'review') return 'is looking into something';
+    if (s.mode === 'Asleep') return 'is asleep';
+    if (s.mode === 'Held') return 'is being carried';
+    if (s.mode === 'Falling') return 'is in the air';
+    if (s.mode === 'Walk') return 'is out for a walk';
+    return 'is here with you';
+  }
+
+  function whereWords(s) {
+    if (!s || !s.running) return '';
+    const bodies = (s.surfaces || []).filter(k => k !== 'web:' + client);
+    const parts = [];
+    if (s.where && s.where !== 'desktop') parts.push('right now he is inside <b>' + s.where.replace(':', ' ') + '</b>');
+    else parts.push('on the <b>desktop</b>');
+    if (bodies.length) parts.push('also in ' + bodies.map(k => '<b>' + k.split(':')[0] + '</b>').join(', '));
+    if (s.brain) parts.push('talks with <b>' + s.brain + '</b>');
+    return parts.join(' · ');
+  }
+
+  async function poll() {
+    try {
+      const s = await (await fetch('/state?client=' + client, { cache: 'no-store' })).json();
+      if (s.busy) return;
+      state = s;
+      const next = s.running ? (s.clip === 'look' ? 'idle' : s.clip) : 'sleeping';
+      if (next !== clip) { clip = next; clipStart = performance.now(); }
+      $('doing').textContent = doingWords(s);
+      $('where').innerHTML = whereWords(s);
+      const b = $('bubble');
+      if (s.saying) { b.textContent = s.saying; b.classList.add('on'); } else b.classList.remove('on');
+      if (s.running && s.pet) $('name').textContent = s.pet === 'damien' ? 'Damien' : 'RevBot';
+      if (lastReplyCount === null) lastReplyCount = s.replyCount || 0;
+      else if ((s.replyCount || 0) !== lastReplyCount) {
+        lastReplyCount = s.replyCount || 0;
+        const w = document.querySelector('.msg.wait'); if (w) w.remove();
+        waiting = false;
+        if (s.reply) add('him', s.reply);
+      }
+    } catch (e) {
+      $('doing').textContent = 'is away (the desktop pet is not running)';
+      clip = 'sleeping';
+    }
+  }
+
+  function add(who, text) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + who;
+    d.textContent = text;
+    $('log').appendChild(d);
+    d.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function post(path, body) {
+    try {
+      await fetch(path, { method: 'POST', headers: { 'X-RevBot': '1', 'Content-Type': 'text/plain; charset=utf-8' }, body });
+    } catch (e) { /* he is away */ }
+  }
+
+  $('chat').addEventListener('submit', async ev => {
+    ev.preventDefault();
+    const t = $('text').value.trim();
+    if (!t || waiting) return;
+    $('text').value = '';
+    add('you', t);
+    add('wait', 'thinking...');
+    waiting = true;
+    await post('/ask', t);
+  });
+  for (const b of document.querySelectorAll('[data-play]')) b.addEventListener('click', () => post('/play', b.dataset.play));
+  for (const b of document.querySelectorAll('[data-say]')) b.addEventListener('click', () => post('/say', b.dataset.say));
+
+  requestAnimationFrame(draw); // draws nothing until the art is in
+  loadArt();
+  poll();
+  setInterval(poll, 800);
+})();
+</script>
+</body>
+</html>

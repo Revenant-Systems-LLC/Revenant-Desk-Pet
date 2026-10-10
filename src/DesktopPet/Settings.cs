@@ -17,6 +17,10 @@ sealed class Settings
     public bool TalkSounds { get; set; } = true;
     /// <summary>When a terminal body appears, walk to its window and go in (off the desk until it closes).</summary>
     public bool FollowSurfaces { get; set; }
+    /// <summary>Serve his web body (a page on localhost; never the network).</summary>
+    public bool WebEnabled { get; set; } = true;
+    /// <summary>The port of that page: http://localhost:PORT/.</summary>
+    public int WebPort { get; set; } = 7474;
     /// <summary>Who the pet talks with: "claude" (Claude Code's default model), "claude:opus" etc., or "ollama:MODEL".</summary>
     public string ChatBrain { get; set; } = "claude";
     /// <summary>Where the pet's own Claude Code conversation runs (its working folder).</summary>

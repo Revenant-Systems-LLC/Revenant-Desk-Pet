@@ -23,6 +23,8 @@
     <EmbeddedResource Include="Assets\damien.atlas.png" LogicalName="damien.atlas.png" />
     <EmbeddedResource Include="Assets\damien.atlas.json" LogicalName="damien.atlas.json" />
     <EmbeddedResource Include="Assets\damien.ico" LogicalName="damien.ico" />
+    <!-- his web body: one page, served on localhost by WebBody.cs -->
+    <EmbeddedResource Include="web\index.html" LogicalName="web.index.html" />
   </ItemGroup>
 
 </Project>
