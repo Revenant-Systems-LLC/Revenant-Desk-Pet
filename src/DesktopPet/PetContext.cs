@@ -56,6 +56,18 @@ sealed class PetContext : ApplicationContext
     const double SurfaceQuietSeconds = 1800;   // a body silent this long has gone without saying so
     string? lastReply;                         // his chat's last complete answer, for the other bodies
     int replyCount;                            // bumps on every answer, so a body can tell a new one
+    // Following him into another body (opt-in, settings.FollowSurfaces): when a terminal
+    // body announces itself from the window in front, he walks over, hops in, and is off
+    // the desk until that body goes or its window closes. Then he drops back out of it.
+    string? goingTo;                           // the body he is walking toward
+    IntPtr goingHwnd;
+    double goingX, goInAt = double.PositiveInfinity;
+    bool goingWalk;                            // the walk over has started
+    int goingTries;                            // walks started so far (a ledge or a fidget can end one early)
+    string? awayTo;                            // the body he is inside right now
+    IntPtr awayHwnd;
+    double nextAwayCheckAt;
+    ToolStripMenuItem followItem = null!;
 
     Dictionary<(string Row, int Index), Sprite> sprites = new();
     double scale = -1;
@@ -184,6 +196,13 @@ sealed class PetContext : ApplicationContext
             double dt = Math.Clamp(t - lastT, 0, 0.1);
             lastT = t;
 
+            if (awayTo is not null)
+            {
+                TickAway(t);
+                stateFile.Update(Snapshot(), t);
+                stateFile.Tick(t);
+                return;
+            }
             if (t >= nextFullscreenAt)
             {
                 nextFullscreenAt = t + 1.0;
@@ -195,6 +214,7 @@ sealed class PetContext : ApplicationContext
             stateFile.Tick(t);
             if (hidden)
                 return;
+            TickFollow(t);
 
             if ((pressed || dragging) && (Control.MouseButtons & MouseButtons.Left) == 0)
                 LostMouseUp(); // the button-up went somewhere else (lock screen, UAC, ...)
@@ -634,6 +654,15 @@ sealed class PetContext : ApplicationContext
             case "surface" when arg is not null:
                 OnSurface(arg.ToLowerInvariant(), parts.Length > 2 ? parts[2].ToLowerInvariant() : "on", kv);
                 break;
+            case "follow":
+                settings.FollowSurfaces = arg?.ToLowerInvariant() switch { "on" => true, "off" => false, _ => !settings.FollowSurfaces };
+                settings.Save();
+                Log.Info($"follow into terminals: {(settings.FollowSurfaces ? "on" : "off")}");
+                break;
+            case "comeback":
+                if (awayTo is not null)
+                    ComeBack();
+                break;
             case "talk":
                 OpenChat();
                 break;
@@ -701,6 +730,10 @@ sealed class PetContext : ApplicationContext
         {
             if (surfaces.Remove(key))
                 Log.Info($"surface gone: {key} ({surfaces.Count} left)");
+            if (awayTo == key)
+                ComeBack();
+            if (goingTo == key)
+                StopFollowing();
             return;
         }
         if (surfaces.TryGetValue(key, out var s))
@@ -710,8 +743,142 @@ sealed class PetContext : ApplicationContext
         }
         surfaces[key] = new Surface { Since = t, LastAt = t };
         Log.Info($"surface here: {key} ({surfaces.Count} now)");
-        if (!hidden)
-            pet.Play("wave"); // he sees himself in a new place
+        if (hidden || awayTo is not null)
+            return;
+        if (settings.FollowSurfaces && friendOf is null && name == "terminal" && goingTo is null && StartFollowing(key))
+            return;
+        pet.Play("wave"); // he sees himself in a new place
+    }
+
+    /// <summary>
+    /// A terminal body just appeared: if the window in front is a terminal on his
+    /// monitor, walk to it. (He goes in once he gets there; see <see cref="TickFollow"/>.)
+    /// </summary>
+    bool StartFollowing(string key)
+    {
+        if (pet.Mode is Mode.Held or Mode.Falling)
+            return false;
+        IntPtr fg = Native.GetForegroundWindow();
+        if (fg == IntPtr.Zero || fg == window.Handle)
+            return false;
+        Native.GetWindowThreadProcessId(fg, out uint pid);
+        if (!TypingApps.Contains(ProcessName(pid)))
+            return false;
+        if (Native.MonitorFromWindow(fg, Native.MONITOR_DEFAULTTONEAREST) != monitor || !Native.GetWindowRect(fg, out var r))
+            return false;
+        double m = 90 * scale;
+        goingTo = key;
+        goingHwnd = fg;
+        goingX = Math.Clamp((r.Left + r.Right) / 2.0, pet.Work.Left + m, Math.Max(pet.Work.Left + m, pet.Work.Right - m));
+        goInAt = double.PositiveInfinity;
+        goingWalk = false;
+        goingTries = 0;
+        pet.KeepAwake = true;      // a body turning up is worth staying up for
+        pet.Terrain = null;        // straight along the ground, no hopping onto windows on the way
+        pet.SetState(null);
+        if (pet.Mode == Mode.Asleep)
+            pet.Poke();            // wakes him; the walk starts once he is up (TickFollow)
+        Log.Info($"following into {key}");
+        return true;
+    }
+
+    void StopFollowing()
+    {
+        goingTo = null;
+        goingWalk = false;
+        goInAt = double.PositiveInfinity;
+        pet.KeepAwake = false;
+        pet.Terrain = settings.Terrain ? terrain : null;
+        ApplyAiHold(immediate: true); // whatever Claude is doing shows again
+    }
+
+    void TickFollow(double t)
+    {
+        if (goingTo is null)
+            return;
+        if (!surfaces.ContainsKey(goingTo) || !Native.IsWindow(goingHwnd))
+        {
+            StopFollowing();
+            return;
+        }
+        if (goInAt <= t)
+        {
+            GoIn();
+            return;
+        }
+        if (!double.IsPositiveInfinity(goInAt) || pet.Mode != Mode.Idle)
+            return; // waking up, walking, or already jumping in
+        if (Math.Abs(pet.X - goingX) < 60 * scale)
+        {
+            pet.Play("jump");
+            goInAt = t + 0.45; // mid-jump: gone
+            return;
+        }
+        if (goingTries < 4)
+        {
+            // Not there yet (or a walk ended early): walk, or walk again.
+            goingTries++;
+            goingWalk = true;
+            pet.WalkBy((goingX - pet.X) / Math.Max(pet.Scale, 0.01)); // WalkBy takes scale-1 pixels
+            return;
+        }
+        Log.Info("could not get to the terminal; staying out");
+        StopFollowing();
+        pet.Play("shrug");
+    }
+
+    void GoIn()
+    {
+        awayTo = goingTo;
+        awayHwnd = goingHwnd;
+        StopFollowing();
+        if (dragging)
+            FinishDrag();
+        pressed = false;
+        window.Hide();
+        bubble.Hide();
+        math.Hide();
+        prompt?.Hide();
+        if (frameClock is not null)
+            frameClock.Slow = true;
+        nextAwayCheckAt = clock.Elapsed.TotalSeconds + 1;
+        Log.Info($"went into {awayTo}");
+    }
+
+    /// <summary>While he is inside another body: the links keep running; he comes back when it goes.</summary>
+    void TickAway(double t)
+    {
+        TickAiLink(t);
+        chat?.Tick();
+        if (t < nextAwayCheckAt)
+            return;
+        nextAwayCheckAt = t + 1;
+        if (awayTo is not null && (!surfaces.ContainsKey(awayTo) || !Native.IsWindow(awayHwnd)))
+            ComeBack();
+    }
+
+    /// <summary>Back onto the desk: he drops out of the bottom of the window he was in.</summary>
+    void ComeBack()
+    {
+        string from = awayTo ?? "?";
+        IntPtr h = awayHwnd;
+        awayTo = null;
+        awayHwnd = IntPtr.Zero;
+        double x = pet.X;
+        double height = 180 * Math.Max(scale, 0.5);
+        if (h != IntPtr.Zero && Native.IsWindow(h) && Native.GetWindowRect(h, out var r))
+        {
+            x = (r.Left + r.Right) / 2.0;
+            height = Math.Clamp(pet.GroundY - r.Bottom, 60 * scale, 700 * scale);
+        }
+        window.Show();
+        if (frameClock is not null)
+            frameClock.Slow = false;
+        ForceRedraw();
+        prompt?.Show();
+        pet.DropIn(x, pet.Work, height);
+        RefreshMonitor(force: false);
+        Log.Info($"came back from {from}");
     }
 
     /// <summary>The moment for state.json: what his other bodies need to show the same pet.</summary>
@@ -726,11 +893,11 @@ sealed class PetContext : ApplicationContext
         Reply: lastReply,
         ReplyCount: replyCount,
         Brain: chat?.Name,
-        Where: "desktop",
+        Where: awayTo ?? "desktop",
         Surfaces: string.Join(',', surfaces.Keys.Order()),
         X: (int)Math.Round(pet.X),
         Y: (int)Math.Round(pet.GroundY),
-        Hidden: hidden);
+        Hidden: hidden || awayTo is not null);
 
     void OnHook(string hookEvent, string session, string? tool, string? type)
     {
@@ -848,6 +1015,15 @@ sealed class PetContext : ApplicationContext
     {
         string? state = AggregateHold();
         double now = clock.Elapsed.TotalSeconds;
+        if (goingTo is not null)
+        {
+            // On his way into a terminal: no held pose until he is in (or gave up); the state is reapplied then.
+            if (aiHolding)
+                pet.SetState(null);
+            aiHolding = false;
+            pendingAiHold = null;
+            return;
+        }
         if (state is null)
         {
             pendingAiHold = null;
@@ -875,7 +1051,7 @@ sealed class PetContext : ApplicationContext
     void TickAiLink(double t)
     {
         // Cleared from the menu (or anything else): respect it, and drop what was queued.
-        if (aiHolding && pet.HeldState is null)
+        if (aiHolding && pet.HeldState is null && goingTo is null)
         {
             aiHolding = false;
             pendingAiHold = null;
@@ -1323,6 +1499,13 @@ sealed class PetContext : ApplicationContext
         });
 
         chaseItem = new ToolStripMenuItem("Chase the mouse", null, (_, _) => pet.SetChasing(!pet.Chasing));
+        followItem = new ToolStripMenuItem("Follow me into the terminal", null, (_, _) =>
+        {
+            settings.FollowSurfaces = !settings.FollowSurfaces;
+            settings.Save();
+            if (!settings.FollowSurfaces && awayTo is not null)
+                ComeBack();
+        });
         talkSoundItem = new ToolStripMenuItem("Talking sounds", null, (_, _) =>
         {
             settings.TalkSounds = !settings.TalkSounds;
@@ -1356,6 +1539,7 @@ sealed class PetContext : ApplicationContext
             talkSoundItem,
             stayPutItem,
             terrainItem,
+            followItem,
             new ToolStripMenuItem("Come here", null, (_, _) => ComeHere()),
         });
         if (friendOf is null)
@@ -1377,6 +1561,7 @@ sealed class PetContext : ApplicationContext
         {
             stayPutItem.Checked = pet.StayPut;
             terrainItem.Checked = settings.Terrain;
+            followItem.Checked = settings.FollowSurfaces;
             chaseItem.Checked = pet.Chasing;
             talkSoundItem.Checked = settings.TalkSounds;
             foreach (var (item, value) in sizeItems)
@@ -1548,6 +1733,11 @@ sealed class PetContext : ApplicationContext
 
     void ComeHere()
     {
+        if (awayTo is not null)
+        {
+            ComeBack();
+            return;
+        }
         IntPtr prim = Native.MonitorFromPoint(new Native.POINT(0, 0), Native.MONITOR_DEFAULTTOPRIMARY);
         if (!Native.TryMonitor(prim, out _, out var work))
             return;

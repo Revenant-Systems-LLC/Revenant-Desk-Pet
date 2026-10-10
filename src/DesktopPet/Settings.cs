@@ -15,6 +15,8 @@ sealed class Settings
     public bool Terrain { get; set; } = true;
     /// <summary>Letters click as a speech bubble types out.</summary>
     public bool TalkSounds { get; set; } = true;
+    /// <summary>When a terminal body appears, walk to its window and go in (off the desk until it closes).</summary>
+    public bool FollowSurfaces { get; set; }
     /// <summary>Who the pet talks with: "claude" (Claude Code's default model), "claude:opus" etc., or "ollama:MODEL".</summary>
     public string ChatBrain { get; set; } = "claude";
     /// <summary>Where the pet's own Claude Code conversation runs (its working folder).</summary>

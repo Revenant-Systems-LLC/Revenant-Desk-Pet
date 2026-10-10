@@ -23,7 +23,7 @@ const HEARTBEAT_MS = 5 * 60 * 1000
 const SAYING_POLL_MS = 1500
 
 // What the drawings read. A change here redraws the band and the spinner.
-const shown = atom({ plugin: 'revbot', key: 'shown' } as const, { clip: 'idle', state: null, saying: null } as Shown)
+const shown = atom({ plugin: 'revbot', key: 'shown' } as const, { clip: 'idle', state: null, saying: null, where: null } as Shown)
 const bandSize = atom({ plugin: 'revbot', key: 'bandSize' } as const, 'small')
 const spinnerStyle = atom({ plugin: 'revbot', key: 'spinnerStyle' } as const, 'sprite')
 
@@ -45,6 +45,7 @@ const S = {
   turnStartedTick: 0,
   sessionId: '',
   desktopSaying: null as string | null,
+  deskWhere: null as string | null,  // where the desktop pet says he is ('desktop', 'terminal:<id>'), null when not running
   pseudo: 12345,
   // where the sprites are mounted, so the frame timer can repaint them in place
   bandId: null as string | null,
@@ -78,7 +79,8 @@ async function show($: EngineInterface, clip: string): Promise<void> {
   S.lastBandFrame = S.lastSpinnerFrame = -1
   const state = S.hold
   const saying = S.desktopSaying
-  await update($, shown, s => (s.clip === clip && s.state === state && s.saying === saying ? s : { clip, state, saying }))
+  const where = S.deskWhere
+  await update($, shown, s => (s.clip === clip && s.state === state && s.saying === saying && s.where === where ? s : { clip, state, saying, where }))
 }
 
 async function playOnce($: EngineInterface, clip: string): Promise<void> {
@@ -126,9 +128,11 @@ async function readDesk($: EngineInterface): Promise<Desk | null> {
 async function pollDesk($: EngineInterface): Promise<void> {
   const desk = await readDesk($)
   const saying = desk?.running ? desk.saying : null
-  if (saying !== S.desktopSaying) {
+  const where = desk?.running ? desk.where : null
+  if (saying !== S.desktopSaying || where !== S.deskWhere) {
     S.desktopSaying = saying
-    await update($, shown, s => ({ ...s, saying }))
+    S.deskWhere = where
+    await update($, shown, s => ({ ...s, saying, where }))
   }
 }
 
@@ -181,6 +185,14 @@ function doingWords(state: string | null): string {
   if (state === 'working') return 'hammering away'
   if (state === 'review') return 'looking into it'
   return S.asleep ? 'asleep' : 'here with you'
+}
+
+/** Where the desktop pet is, relative to this session: inside this terminal, on the desk, in another body. */
+function whereWords(where: string | null): string | null {
+  if (!where) return null
+  if (where === `terminal:${S.sessionId.replace(/[^A-Za-z0-9]/g, '')}`) return 'came in from the desk'
+  if (where === 'desktop') return 'also on your desk'
+  return `also in ${where.replace(':', ' ')}`
 }
 
 // ---------------------------------------------------------------- hooks
@@ -324,7 +336,7 @@ export const register: Register = (on, options) => {
         <Raster key="pet" columns={size.columns} rows={size.rows} cells={cells} />
         <Box flexDirection="column" justifyContent="flex-end">
           <Text bold color="claude">RevBot</Text>
-          <Text dimColor>{doingWords(s.state)}</Text>
+          <Text dimColor>{doingWords(s.state)}{whereWords(s.where) ? `, ${whereWords(s.where)}` : ''}</Text>
           {s.saying ? <Text wrap="wrap">"{s.saying}"</Text> : null}
         </Box>
       </Box>

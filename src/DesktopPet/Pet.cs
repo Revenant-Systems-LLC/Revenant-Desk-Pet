@@ -137,6 +137,8 @@ sealed class Pet
     public double Scale { get; set; } = 1;
     public bool StayPut { get; set; }
     public bool Demo { get; set; }
+    /// <summary>Do not doze off for lack of input (he has somewhere to be).</summary>
+    public bool KeepAwake { get; set; }
     public Mode Mode => mode;
     public Native.RECT Work => work;
     /// <summary>The floor under the pet: the taskbar, or the top edge of the window it stands on.</summary>
@@ -478,7 +480,7 @@ sealed class Pet
 
     void TickIdle(uint idleMs)
     {
-        if (!Demo && CanSleep && idleMs >= SleepAfterSeconds * 1000)
+        if (!Demo && !KeepAwake && CanSleep && idleMs >= SleepAfterSeconds * 1000)
         {
             StartSleep();
             return;

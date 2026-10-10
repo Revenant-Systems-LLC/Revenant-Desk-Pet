@@ -10,6 +10,7 @@
 #   revbot talk            opens his chat box on the desktop
 #   revbot where           the state file, as is
 #   revbot start           starts the desktop pet if it is not running
+#   revbot follow on|off   follow you into the terminal (he walks to it and goes in); revbot back brings him out
 #   Enable-RevBotPrompt    a one-line RevBot in front of your prompt (Disable-RevBotPrompt undoes it)
 #
 # It reads state.json (what the pet writes next to its exe) and talks to the pet
@@ -243,10 +244,12 @@ function Invoke-RevBot {
         'clear' { Send-RevBot 'clear' }
         'talk'  { Send-RevBot 'talk' }
         'come'  { Send-RevBot 'sendhome' }
+        'follow' { Send-RevBot ('follow ' + ($rest -join ' ')) }
+        'back'  { Send-RevBot 'comeback' }
         'start' { Start-RevBot }
         'show'  { Show-RevBot -Columns $(if ($rest.Count) { [int]$rest[0] } else { 16 }) }
         'where' { $s = Get-RevBotState; if ($s) { $s | Format-List } else { 'not running' } }
-        default { Write-Host "revbot [ask TEXT | chat | say TEXT | play CLIP | state NAME | clear | talk | start | show [12|16|24] | where]" }
+        default { Write-Host "revbot [ask TEXT | chat | say TEXT | play CLIP | state NAME | clear | talk | start | show [12|16|24] | where | follow on|off | back]" }
     }
 }
 

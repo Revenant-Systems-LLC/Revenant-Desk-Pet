@@ -124,13 +124,23 @@ goes; he waves at a new one, and a body silent for half an hour is stood down.
 one place. `Pet.SetState(name)` in `src/DesktopPet/Pet.cs` stays the single
 entry point for his state: `working`, `waiting`, `review`, `failed`, `idle`.
 
+**Follow me into the terminal** (menu, off by default; `follow on|off` over the
+pipe): when a terminal body announces itself from the window in front, and
+that window is a terminal on his monitor, he wakes if he must, walks over,
+hops up and is gone from the desk; the terminal's band says he came in from
+the desk. He drops back out of the bottom of that window when the session
+ends or the window closes, on "Come here" (tray double-click), on `comeback`
+over the pipe, or when the option is turned off. While he is in, his links
+keep running and `state.json` says `where: terminal:<session>`.
+
 ### RevBot in the terminal (Claude Code)
 
 `mod/revbot` is a Claude Code mod: he animates in the band above the prompt
 and takes the place of the thinking spinner while a turn runs, with the same
 reactions as on the desktop. It links to the desktop pet when its `petDir`
 option points at this folder, and then shows whatever he is saying. Load it
-with `claude --plugin-dir <repo>\modevbot`, or for every session (the
+with `claude --plugin-dir <repo>\mod
+evbot`, or for every session (the
 desktop app's Code tab included) with `CLAUDE_CODE_PLUGIN_DIRS` in
 `~/.claude/settings.json`. `/revbot` inside a session lists what it can do.
 Details and options: [mod/revbot/README.md](mod/revbot/README.md). His
@@ -148,6 +158,7 @@ revbot say "text"           he says it
 revbot play wave            any clip; revbot state working holds a state; revbot clear lets go
 revbot talk                 opens his chat box on the desktop
 revbot start                starts the desktop pet
+revbot follow on|off        follow you into the terminal; revbot back brings him out
 Enable-RevBotPrompt         his face and state in front of your prompt (Disable-RevBotPrompt undoes it)
 ```
 
