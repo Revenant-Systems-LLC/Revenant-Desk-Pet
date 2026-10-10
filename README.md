@@ -4,8 +4,12 @@ RevBot, a little robot that lives on the Windows taskbar. It walks around,
 fidgets, watches the mouse cursor, naps when you step away, and hides itself
 whenever a fullscreen app or game is in front of it.
 
-Where it's going (an LLM inside, a detachable arm, mech mode, climbing on your
-windows, and more) is in [ROADMAP.md](ROADMAP.md).
+He is one pet with several bodies: the desktop (this app), your Claude Code
+terminal (`mod/revbot`, see "RevBot in the terminal"), and PowerShell
+(`shell/RevBot.psm1`). The desktop pet owns his state and his conversation;
+the other bodies show the same pet and talk to him through it. Where it's
+going (a web body, an LLM inside, a detachable arm, mech mode, and more) is in
+[ROADMAP.md](ROADMAP.md).
 
 Built on WinForms with a per-pixel-alpha layered window (`UpdateLayeredWindow`).
 It uses no GPU and no Direct3D. The only GPU cost is DWM compositing one small
@@ -94,29 +98,62 @@ falls asleep, and it wakes up when you come back.
 
 ## Files it writes
 
-Both go next to the exe, never anywhere else:
+All go next to the exe, never anywhere else:
 
 - `settings.json`: size, stay-put, last position, which pet (a friend pet
   keeps its own `settings.<pet>.json` and `logs\pet.<pet>.log`)
 - `logs\pet.log`: state changes and errors, capped at two 1 MB files
+- `state.json`: what he is doing right now, for his other bodies (below).
+  Rewritten only when something changes, at most ten times a second, and
+  marked `running: false` on exit. It holds the clip playing, his mode, the
+  held state, what Claude Code is doing across sessions, the line in his speech
+  bubble, his chat's last answer and a counter of answers, which brain he talks
+  with, which bodies have announced themselves, and where his feet are. The
+  bubble line and the last answer are the one place his words touch the disk;
+  they are overwritten by the next ones and cleared when he exits. The log
+  still never holds his words.
 
-## The AI hookup (later)
+## One pet, several bodies
 
-`Pet.SetState(name)` in `src/DesktopPet/Pet.cs` is the single entry point. A
-looping state stays until cleared; a one-off clip just plays:
+The desktop pet is the hub. Anything else that shows him is a body: it reads
+`state.json` to show the same clip, mood and words, and talks back over the
+pipe. A body says hello with `surface NAME on session=ID` (or `pid=N`),
+repeats it now and then as a heartbeat, and `surface NAME off ...` when it
+goes; he waves at a new one, and a body silent for half an hour is stood down.
+`state.json` lists the bodies present, so each can know he is in more than
+one place. `Pet.SetState(name)` in `src/DesktopPet/Pet.cs` stays the single
+entry point for his state: `working`, `waiting`, `review`, `failed`, `idle`.
 
-| State | Clip |
-|---|---|
-| `working` | hammering away |
-| `waiting` | chin-tapping, hands folded |
-| `review` | looking around at its surroundings |
-| `failed` | arm pops off, gets reattached |
-| `idle` or null | back to normal |
+### RevBot in the terminal (Claude Code)
 
-The "Hold a state" menu drives the same call, so the states can be previewed
-now. The missing piece is a channel into the running process (a named pipe or
-a `--state working` argument forwarded to the running copy) so that something
-like a Claude Code hook can call it.
+`mod/revbot` is a Claude Code mod: he animates in the band above the prompt
+and takes the place of the thinking spinner while a turn runs, with the same
+reactions as on the desktop. It links to the desktop pet when its `petDir`
+option points at this folder, and then shows whatever he is saying. Load it
+with `claude --plugin-dir <repo>\modevbot`, or for every session (the
+desktop app's Code tab included) with `CLAUDE_CODE_PLUGIN_DIRS` in
+`~/.claude/settings.json`. `/revbot` inside a session lists what it can do.
+Details and options: [mod/revbot/README.md](mod/revbot/README.md). His
+terminal frames come from `python toolsuild_cells.py` (rerun after the art
+changes).
+
+### RevBot in PowerShell
+
+```powershell
+Import-Module <repo>\shell\RevBot.psd1   # or set $env:REVBOT_HOME to the pet's folder
+revbot                      him, in colour, with what he is doing
+revbot ask "question"       ask his Claude; the answer prints here and in his bubble
+revbot chat                 a back-and-forth until /bye
+revbot say "text"           he says it
+revbot play wave            any clip; revbot state working holds a state; revbot clear lets go
+revbot talk                 opens his chat box on the desktop
+revbot start                starts the desktop pet
+Enable-RevBotPrompt         his face and state in front of your prompt (Disable-RevBotPrompt undoes it)
+```
+
+Put the `Import-Module` line (and `Enable-RevBotPrompt` if you like) in your
+`$PROFILE` to have him in every shell. The module finds the pet's folder from
+`$env:REVBOT_HOME`, else `dist\` next to it in the repo.
 
 ## Talking
 

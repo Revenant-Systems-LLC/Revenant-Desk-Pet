@@ -28,3 +28,7 @@ state.json
 state.*.json
 state.json.tmp
 state.*.json.tmp
+
+# written by Claude Code when it loads the mod (types for the editor); regenerated every load
+mod/revbot/.claude-plugin/types/
+mod/revbot/tsconfig.json

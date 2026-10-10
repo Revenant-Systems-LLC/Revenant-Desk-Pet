@@ -10,6 +10,29 @@ torture: part Tamagotchi, part Kick the Buddy. It ships with RevBot. A
 make-your-own-pet feature may come to the product later; for now that lives
 only in the separate kid's edition (Desk-Pet-Maker).
 
+## 0. One entity, every surface (Dave, 2026-10-09)
+
+The end result should feel like there is something inside the computer that
+helps you: one companion that can be on every surface you use, with
+continuity between them. "Clippy 2.0 but not as annoying." Order of work:
+desktop (in a good place), then the CLI and PowerShell, then a web version,
+then the AI moving between them depending on what you are doing.
+
+- Built 2026-10-09 (branch yggdrasil/mascot-integration-cli-powershell):
+  the desktop pet writes `state.json` and keeps a registry of bodies that
+  announce themselves; a Claude Code mod (`mod/revbot`) puts him in the band
+  above the prompt and in the thinking spinner, reacting like the desktop pet
+  and showing what the desktop pet says; a PowerShell module
+  (`shell/RevBot.psm1`) draws him, asks his Claude and prints the answers,
+  and prefixes the prompt with his face and state.
+- Next: a web body (a local page served by the pet, same state file and
+  pipe, so a browser tab or a phone on the LAN shows the same pet); the
+  hand-off, where he visibly travels (walks to the terminal window and goes
+  in when a terminal body appears, climbs back out when it closes), kept
+  opt-in so he never vanishes from the desk by surprise; one shared memory
+  so what you told him in one body he knows in the next; "where is the
+  user" (active window, idle time) deciding which body speaks.
+
 ## 1. A small LLM inside
 
 - Around 1.5B parameters, so it runs on weak PCs.
