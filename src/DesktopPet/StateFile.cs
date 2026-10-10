@@ -21,6 +21,9 @@ sealed class StateFile
         string Claude,       // what Claude Code is doing across sessions: "idle", "review", "working", "waiting"
         int Sessions,        // Claude Code sessions he is tracking
         string? Saying,      // the speech bubble's current line, or null
+        string? Reply,       // his chat's last complete answer, or null
+        int ReplyCount,      // how many answers so far: a body waits for this to change
+        string? Brain,       // who he talks with ("Claude", "llama3.1:8b"), or null
         string Where,        // which body shows him: "desktop", "terminal:<session>", ...
         string Surfaces,     // every body that announced itself, comma separated
         int X,               // feet on screen, physical pixels
@@ -94,6 +97,9 @@ sealed class StateFile
                 claude = s.Claude,
                 sessions = s.Sessions,
                 saying = s.Saying,
+                reply = s.Reply,
+                replyCount = s.ReplyCount,
+                brain = s.Brain,
                 where = s.Where,
                 surfaces = s.Surfaces.Length == 0 ? Array.Empty<string>() : s.Surfaces.Split(','),
                 x = s.X,

@@ -54,6 +54,8 @@ sealed class PetContext : ApplicationContext
     }
     readonly Dictionary<string, Surface> surfaces = new();
     const double SurfaceQuietSeconds = 1800;   // a body silent this long has gone without saying so
+    string? lastReply;                         // his chat's last complete answer, for the other bodies
+    int replyCount;                            // bumps on every answer, so a body can tell a new one
 
     Dictionary<(string Row, int Index), Sprite> sprites = new();
     double scale = -1;
@@ -327,6 +329,8 @@ sealed class PetContext : ApplicationContext
         next.ReplyDone += (text, _) =>
         {
             chatWaiting = false;
+            lastReply = string.IsNullOrWhiteSpace(text) ? null : text;
+            replyCount++;
             bubble.Stream(text, done: true);
         };
         if (next is ClaudeChat claude)
@@ -719,6 +723,9 @@ sealed class PetContext : ApplicationContext
         Claude: AggregateHold() ?? "idle",
         Sessions: aiSessions.Count,
         Saying: bubble.Saying,
+        Reply: lastReply,
+        ReplyCount: replyCount,
+        Brain: chat?.Name,
         Where: "desktop",
         Surfaces: string.Join(',', surfaces.Keys.Order()),
         X: (int)Math.Round(pet.X),
