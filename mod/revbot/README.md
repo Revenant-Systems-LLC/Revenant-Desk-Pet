@@ -46,8 +46,8 @@ folder in `~/.claude/settings.json`:
 | Command | What |
 |---|---|
 | `/revbot` | where he is, and this list |
-| `/revbot band off`, `small`, `large` | the band above the prompt: none, 16 columns, 24 columns |
-| `/revbot spinner sprite`, `face`, `off` | the thinking spinner: his sprite, a one-line face, or Claude Code's own |
+| `/revbot band off`, `small`, `large` | the band above the prompt: none, his whole figure 12 rows tall, 16 rows tall |
+| `/revbot spinner auto`, `sprite`, `face`, `off` | the thinking spinner. `auto` (the default) shows his head there only when the band is off, and a one-line face otherwise, so there is never two of him; `sprite` always his head; `face` always the one-line face; `off` Claude Code's own |
 | `/revbot say TEXT` | the desktop pet says it in his bubble |
 | `/revbot desk` | what the desktop pet is doing |
 
@@ -65,7 +65,10 @@ is saying) and runs `revbot-hook.exe --send` to announce itself.
 - `hooks/register.tsx`: the hooks module (state machine, drawing, the command)
 - `hooks/sprite.ts`: frame lookup and packing into the terminal's cell grid
 - `cells.json`: the frames, built by `python tools/build_cells.py` from the
-  pet's atlas (rerun after the art changes)
+  pet's atlas (rerun after the art changes): his head at 8 rows, his whole
+  figure at 12 and 16. `python tools/preview_cells.py` draws them as a PNG
+  the way a terminal shows them. They are shrunk from the painted art, so they
+  are a stand-in until there is hand-drawn pixel art at this size.
 - `types/index.d.ts`: the state the drawings read
 
 In the desktop app's Code tab the cell grid cannot be drawn; the band and the

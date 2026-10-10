@@ -11,7 +11,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Shown } from '../types'
-import { clipFor, face, frameAt, isDone, packFrame, parseSheet, sizeFor } from './sprite'
+import { clipFor, face, frameAt, isDone, packFrame, parseSheet, pick, spinnerShows } from './sprite'
 import type { Sheet, Size } from './sprite'
 
 const PLUGIN = 'revbot'
@@ -25,7 +25,7 @@ const SAYING_POLL_MS = 1500
 // What the drawings read. A change here redraws the band and the spinner.
 const shown = atom({ plugin: 'revbot', key: 'shown' } as const, { clip: 'idle', state: null, saying: null, where: null } as Shown)
 const bandSize = atom({ plugin: 'revbot', key: 'bandSize' } as const, 'small')
-const spinnerStyle = atom({ plugin: 'revbot', key: 'spinnerStyle' } as const, 'sprite')
+const spinnerStyle = atom({ plugin: 'revbot', key: 'spinnerStyle' } as const, 'auto') // 'auto': never two of him at once
 
 type Desk = { running: boolean; saying: string | null; claude: string; where: string }
 
@@ -142,7 +142,7 @@ async function frame($: EngineInterface): Promise<void> {
   const sheet = S.sheet
   if (!sheet) return
   const elapsedMs = (S.tick - S.clipStartedAt) * TICK_MS
-  const size = S.bandSizeUsed ?? S.spinnerSizeUsed ?? sizeFor(sheet, 16)
+  const size = S.bandSizeUsed ?? S.spinnerSizeUsed ?? pick(sheet, 'body', 12)
   const { clip } = clipFor(size, currentClip())
 
   if (S.oneShot && isDone(clip, elapsedMs)) {
@@ -214,7 +214,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'revbot',
       description: 'RevBot in your terminal: band size, spinner style, say something, where he is',
-      argumentHint: '[band off|small|large] [spinner sprite|face|off] [say TEXT] [desk]',
+      argumentHint: '[band off|small|large] [spinner auto|sprite|face|off] [say TEXT] [desk]',
     })
 
     if (e.isInteractive && e.surface === 'terminal') {
@@ -293,7 +293,7 @@ export const register: Register = (on, options) => {
       await update($, bandSize, () => arg)
       return { text: `RevBot's band above the prompt: ${arg}.` }
     }
-    if (verb === 'spinner' && ['sprite', 'face', 'off'].includes(arg)) {
+    if (verb === 'spinner' && ['auto', 'sprite', 'face', 'off'].includes(arg)) {
       await update($, spinnerStyle, () => arg)
       return { text: `RevBot's spinner: ${arg}.` }
     }
@@ -312,7 +312,7 @@ export const register: Register = (on, options) => {
     return {
       text: [
         `RevBot: ${currentClip()}${S.hold ? ` (Claude ${S.hold})` : ''}. Band ${band}, spinner ${spin}${S.hookExe ? ', desktop pet linked' : ''}.`,
-        '/revbot band off|small|large    /revbot spinner sprite|face|off',
+        '/revbot band off|small|large    /revbot spinner auto|sprite|face|off',
         '/revbot say TEXT (the desktop pet says it)    /revbot desk (where he is)',
       ].join('\n'),
     }
@@ -325,7 +325,7 @@ export const register: Register = (on, options) => {
     if (mode === 'off') return next(e)
     const s = await read($, shown)
     const { Box, Text, Raster } = $.ui.resolve(e)
-    const size = sizeFor(sheet, mode === 'large' ? 24 : 16)
+    const size = pick(sheet, 'body', mode === 'large' ? 16 : 12)
     S.bandId = e.requestId
     S.bandSizeUsed = size
     S.lastBandFrame = -1
@@ -346,7 +346,7 @@ export const register: Register = (on, options) => {
   on('ui.render', { component: 'Spinner' }, async ($, e, next) => {
     const sheet = S.sheet
     if (e.surface !== 'terminal' || !sheet) return next(e)
-    const style = await read($, spinnerStyle)
+    const style = spinnerShows(await read($, spinnerStyle), await read($, bandSize))
     if (style === 'off') return next(e)
     const s = await read($, shown)
     const label = e.props.message ?? e.props.word
@@ -364,7 +364,7 @@ export const register: Register = (on, options) => {
         </Box>
       )
     }
-    const size = sizeFor(sheet, 12)
+    const size = pick(sheet, 'head', 8) // only his head: a whole body at spinner size is a smudge
     S.spinnerSizeUsed = size
     S.lastSpinnerFrame = -1
     const { clip } = clipFor(size, s.clip)

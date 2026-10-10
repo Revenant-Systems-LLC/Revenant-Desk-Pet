@@ -1,7 +1,7 @@
 // claude plugin test mod/revbot
 import { expect, test } from 'claude-code/testing'
 
-import { base64, clipFor, face, frameAt, isDone, packFrame, parseSheet, sizeFor } from './hooks/sprite'
+import { base64, clipFor, face, frameAt, isDone, packFrame, parseSheet, pick, sizeFor, spinnerShows } from './hooks/sprite'
 
 const TINY = JSON.stringify({
   pet: 'revbot',
@@ -41,6 +41,25 @@ test('clips loop, one-offs end, missing clips fall back', async () => {
   expect(isDone(wave, 250)).toBe(true)
   expect(clipFor(size, 'happy').name).toBe('wave') // happy -> jump -> wave
   expect(clipFor(size, 'working').name).toBe('idle') // working -> think -> idle
+})
+
+test('sizes are picked by crop and rows, falling back when a crop is missing', async () => {
+  const sheet = parseSheet(TINY)
+  sheet.sizes.push({ crop: 'head', columns: 3, rows: 2, clips: sheet.sizes[0]!.clips })
+  sheet.sizes.push({ crop: 'body', columns: 5, rows: 4, clips: sheet.sizes[0]!.clips })
+  expect(pick(sheet, 'head', 8).columns).toBe(3)
+  expect(pick(sheet, 'body', 3).columns).toBe(5) // 4 rows is nearer 3 than 1 row (the uncropped size counts as body)
+  expect(pick(sheet, 'body', 1).columns).toBe(2)
+  const old = parseSheet(TINY)
+  expect(pick(old, 'head', 8).columns).toBe(2) // a sheet without crops still gives something
+})
+
+test('auto spinner: his head only when the band is off, so there is never two of him', async () => {
+  expect(spinnerShows('auto', 'small')).toBe('face')
+  expect(spinnerShows('auto', 'large')).toBe('face')
+  expect(spinnerShows('auto', 'off')).toBe('sprite')
+  expect(spinnerShows('sprite', 'small')).toBe('sprite')
+  expect(spinnerShows('off', 'off')).toBe('off')
 })
 
 test('the spinner face changes with the state and blinks', async () => {

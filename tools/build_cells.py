@@ -1,6 +1,6 @@
 """
 Render the pet's sprite clips down to terminal cells for his terminal bodies
-(the Claude Code mod, the console app). Reads the embedded atlas
+(the Claude Code mod, the PowerShell module). Reads the embedded atlas
 (src/DesktopPet/Assets/<pet>.atlas.png + .json, the same files the exe uses) and
 writes mod/revbot/cells.json.
 
@@ -8,12 +8,28 @@ A terminal cell is about twice as tall as it is wide, so each cell holds two
 pixels stacked: the top half drawn with the upper half block (U+2580) in the
 foreground colour, the bottom half as the background colour. A cell with only
 its lower pixel set uses the lower half block (U+2584). Colours are quantised
-to one palette of at most 63 entries so every cell is three characters in the
+to one palette of at most 62 entries so every cell is three characters in the
 JSON: glyph, foreground index, background index (index 0 = the terminal's own
 colour, i.e. transparent).
 
-    python tools/build_cells.py            # RevBot, 12/16/24 columns
-    python tools/build_cells.py --pet damien --columns 16
+Two crops, both sized by rows (a terminal's height is what is scarce):
+  body  his whole figure, framed on his idle pose. Props and flung arms that
+        reach past it are cut; a jump higher than the frame is lowered so his
+        head stays in. The band above the prompt uses it.
+  head  his head and antenna only, for the small spots (the spinner), where a
+        whole body would be a smudge.
+
+Shrinking painted art to 10 to 30 pixels by averaging smears his black outline
+into everything and loses the small bright bits (eye glints, the antenna ball,
+the yellow stripes). So each terminal pixel takes the most telling colour of
+the art it covers instead: the outline is left out, bright and saturated
+colours count extra, and a spot that is nothing but outline (thin legs, the
+neck) shows as a dark ink. Colours are lifted a little so he reads on a dark
+terminal.
+
+    python tools/build_cells.py            # RevBot: head 8 rows, body 12 and 16 rows
+    python tools/build_cells.py --pet damien --head 8 --body 12
+    python tools/preview_cells.py          # look at the result as a PNG
 """
 import argparse
 import json
@@ -21,7 +37,8 @@ import math
 import os
 import sys
 
-from PIL import Image
+import numpy as np
+from PIL import Image, ImageFilter
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -35,6 +52,15 @@ CLIPS = [
 ]
 ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_"
 UPPER, LOWER, FULL, EMPTY = "▀", "▄", "█", " "
+
+LIFT = 1.2               # brighten colours by this much (dark greys vanish on a dark terminal)
+INK = (36, 36, 40)       # a spot of pure outline: legs, neck, the edge of a thin arm
+COVER = 0.4              # less of a spot covered than this: transparent
+OUTLINE_LUM = 40         # darker than this, near the outside, is outline
+OUTLINE_REACH = 4        # art pixels from the outside that still count as near it
+SAT_WEIGHT = 2.5         # how much extra a saturated colour counts (orange, yellow)
+GLINT_WEIGHT = 3.0       # and a near-white one (eye glints, paper)
+MIN_SHARE = 0.15         # a colour must cover this much of a spot to be picked
 
 
 def load(pet):
@@ -69,43 +95,83 @@ def extent(manifest, rows, clips):
     return int(left), int(top), int(right), int(bottom)
 
 
-def premultiply(img):
-    """RGBA -> premultiplied RGBA, so averaging never bleeds black from transparent pixels."""
-    arr = img.tobytes()
-    pre = bytearray(len(arr))
-    for i in range(0, len(arr), 4):
-        al = arr[i + 3]
-        pre[i] = arr[i] * al // 255
-        pre[i + 1] = arr[i + 1] * al // 255
-        pre[i + 2] = arr[i + 2] * al // 255
-        pre[i + 3] = al
-    return Image.frombytes("RGBA", img.size, bytes(pre))
+def crops(manifest, rows):
+    """The body and head boxes around the anchor, both framed on the idle pose."""
+    left, top, right, bottom = extent(manifest, rows, ["idle"])
+    w, h = right - left, bottom - top
+    body = (round(left - 0.18 * w), round(top - 0.07 * h), round(right + 0.18 * w), bottom + 6)
+    head = (round(left - 0.04 * w), round(top - 0.03 * h), round(right + 0.04 * w), round(top + 0.6 * h))
+    return {"body": body, "head": head}
 
 
-def unpremultiply_pixel(p):
-    pr, pg, pb, pa = p
-    if pa < 128:
-        return None
-    return (min(255, pr * 255 // pa), min(255, pg * 255 // pa), min(255, pb * 255 // pa))
-
-
-def render_frame(sheet, f, box, columns, rows):
-    """One frame as (glyph, fg_rgb_or_None, bg_rgb_or_None) per cell, row-major."""
+def frame_canvas(sheet, f, box, pin_top=None):
+    """
+    One frame placed in a crop box; a jump that would leave the top is lowered to fit.
+    With pin_top (the head crop), the top of the art always sits that far below the
+    box top instead, so a crouch or a sit never drops his head out of it.
+    """
     left, top, right, bottom = box
-    width, height = right - left, bottom - top
-    canvas = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    canvas = Image.new("RGBA", (right - left, bottom - top), (0, 0, 0, 0))
     crop = sheet.crop((f["x"], f["y"], f["x"] + f["w"], f["y"] + f["h"]))
     if f.get("mirror"):
         crop = crop.transpose(Image.FLIP_LEFT_RIGHT)
-    canvas.alpha_composite(crop, (f["ox"] - left, f["oy"] - top))
-    # Two pixels per cell: a columns x (rows*2) image, box-filtered on premultiplied colour.
-    small = premultiply(canvas).resize((columns, rows * 2), Image.BOX)
-    px = small.load()
+    y = max(0, f["oy"] - top)
+    if pin_top is not None and (bbox := crop.getchannel("A").getbbox()) is not None:
+        y = pin_top - bbox[1]
+    x = f["ox"] - left
+    # whatever hangs off the left or top of the box is cut (Pillow wants non-negative positions)
+    canvas.alpha_composite(crop, (max(0, x), max(0, y)), (max(0, -x), max(0, -y)))
+    return canvas
+
+
+def shrink(canvas, w, h):
+    """The canvas as h rows of w pixels (an rgb tuple, or None for transparent), one telling colour each."""
+    a = np.asarray(canvas).astype(np.float32)
+    rgb, alpha = a[..., :3], a[..., 3]
+    opaque = alpha > 128
+    outside = Image.fromarray((~opaque).astype(np.uint8) * 255).filter(ImageFilter.MaxFilter(2 * OUTLINE_REACH + 1))
+    lum = rgb @ np.array([0.299, 0.587, 0.114], dtype=np.float32)
+    outline = opaque & (lum < OUTLINE_LUM) & (np.asarray(outside) > 0)
+    hi, lo = rgb.max(-1), rgb.min(-1)
+    sat = (hi - lo) / np.maximum(hi, 1)
+    H, W = alpha.shape
+    px = []
+    for ty in range(h):
+        y0, y1 = int(ty * H / h), int((ty + 1) * H / h)
+        row = []
+        for tx in range(w):
+            x0, x1 = int(tx * W / w), int((tx + 1) * W / w)
+            spot = opaque[y0:y1, x0:x1]
+            if spot.size == 0 or spot.mean() < COVER:
+                row.append(None)
+                continue
+            keep = spot & ~outline[y0:y1, x0:x1]
+            if keep.sum() < 0.12 * spot.size:
+                row.append(INK)
+                continue
+            cols = rgb[y0:y1, x0:x1][keep]
+            weight = 1.0 + SAT_WEIGHT * sat[y0:y1, x0:x1][keep] + GLINT_WEIGHT * (lum[y0:y1, x0:x1][keep] > 200)
+            q = (cols // 48).astype(np.int32)  # coarse colour groups
+            keys = q[:, 0] * 64 + q[:, 1] * 8 + q[:, 2]
+            best, best_w = cols.mean(0), -1.0
+            for k in np.unique(keys):
+                sel = keys == k
+                if sel.mean() < MIN_SHARE:
+                    continue
+                if weight[sel].sum() > best_w:
+                    best, best_w = cols[sel].mean(0), weight[sel].sum()
+            row.append(tuple(int(v) for v in np.clip(best * LIFT, 0, 255)))
+        px.append(row)
+    return px
+
+
+def render_frame(sheet, f, box, columns, rows, pin_top=None):
+    """One frame as (glyph, fg_rgb_or_None, bg_rgb_or_None) per cell, row-major."""
+    px = shrink(frame_canvas(sheet, f, box, pin_top), columns, rows * 2)
     cells = []
     for r in range(rows):
         for c in range(columns):
-            t = unpremultiply_pixel(px[c, 2 * r])
-            b = unpremultiply_pixel(px[c, 2 * r + 1])
+            t, b = px[2 * r][c], px[2 * r + 1][c]
             if t is None and b is None:
                 cells.append((EMPTY, None, None))
             elif t is not None and b is not None:
@@ -117,8 +183,13 @@ def render_frame(sheet, f, box, columns, rows):
     return cells
 
 
-def build_palette(all_cells, limit=63):
-    """Quantise every colour seen to at most `limit` entries (median cut via Pillow)."""
+def build_palette(all_cells, limit=62):
+    """
+    Quantise every colour seen to at most `limit` entries (median cut via Pillow).
+    62, not the 63 the alphabet allows: index 63 is "_", and with it a run of
+    indices can spell "ghs_" and 36 letters, which secret scanners read as a
+    GitHub token and rightly refuse to commit.
+    """
     seen = {}
     for frame in all_cells:
         for _, fg, bg in frame:
@@ -162,33 +233,37 @@ def encode(cells, mapping):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pet", default="revbot")
-    ap.add_argument("--columns", type=int, nargs="*", default=[12, 16, 24])
+    ap.add_argument("--head", type=int, nargs="*", default=[8], help="rows of the head-only sizes")
+    ap.add_argument("--body", type=int, nargs="*", default=[12, 16], help="rows of the whole-body sizes")
     ap.add_argument("--out", default=OUT)
     args = ap.parse_args()
 
     manifest, sheet = load(args.pet)
     rows = frames_by_row(manifest)
     clips = [c for c in CLIPS if c in manifest["clips"]]
-    box = extent(manifest, rows, clips)
-    width, height = box[2] - box[0], box[3] - box[1]
-    print(f"{args.pet}: {len(clips)} clips, frame box {width}x{height} px around the anchor")
+    boxes = crops(manifest, rows)
+    # the head crop keeps the top of his art where the idle pose has it
+    pins = {"body": None, "head": extent(manifest, rows, ["idle"])[1] - boxes["head"][1]}
+    print(f"{args.pet}: {len(clips)} clips, body box {boxes['body']}, head box {boxes['head']} around the anchor")
 
     sizes = []
     rendered = []  # every frame's cells, to build one palette afterwards
-    for columns in args.columns:
-        cell_px = width / columns
-        nrows = max(1, math.ceil(height / (2 * cell_px)))
-        size = {"columns": columns, "rows": nrows, "clips": {}}
-        for name in clips:
-            clip = manifest["clips"][name]
-            frames = []
-            for idx in clip["frames"]:
-                cells = render_frame(sheet, rows[clip["row"]][idx], box, columns, nrows)
-                rendered.append(cells)
-                frames.append(cells)
-            size["clips"][name] = {"fps": clip["fps"], "loop": clip["loop"], "frames": frames}
-        sizes.append(size)
-        print(f"  {columns} columns x {nrows} rows: {sum(len(c['frames']) for c in size['clips'].values())} frames")
+    for crop, row_counts in (("head", args.head), ("body", args.body)):
+        left, top, right, bottom = boxes[crop]
+        for nrows in row_counts:
+            art_px = (bottom - top) / (2 * nrows)  # art pixels per terminal pixel
+            columns = max(1, round((right - left) / art_px))
+            size = {"crop": crop, "columns": columns, "rows": nrows, "clips": {}}
+            for name in clips:
+                clip = manifest["clips"][name]
+                frames = []
+                for idx in clip["frames"]:
+                    cells = render_frame(sheet, rows[clip["row"]][idx], boxes[crop], columns, nrows, pins[crop])
+                    rendered.append(cells)
+                    frames.append(cells)
+                size["clips"][name] = {"fps": clip["fps"], "loop": clip["loop"], "frames": frames}
+            sizes.append(size)
+            print(f"  {crop}: {columns} columns x {nrows} rows, {sum(len(c['frames']) for c in size['clips'].values())} frames")
 
     palette, mapping = build_palette(rendered)
     for size in sizes:
@@ -196,11 +271,11 @@ def main():
             clip["frames"] = [encode(cells, mapping) for cells in clip["frames"]]
 
     out = {
-        "version": 1,
+        "version": 2,
         "pet": args.pet,
-        "note": "Each frame: g = glyphs (space, upper half block, lower half block, full block), "
-                "f/b = foreground/background palette index per cell as one character of "
-                "0-9A-Za-z-_ (0 = terminal default). Built by tools/build_cells.py.",
+        "note": "Each size: crop (head or body) and columns x rows of cells. Each frame: g = glyphs (space, "
+                "upper half block, lower half block, full block), f/b = foreground/background palette index "
+                "per cell as one character of 0-9A-Za-z-_ (0 = terminal default). Built by tools/build_cells.py.",
         "palette": ["#%02x%02x%02x" % c for c in palette],
         "sizes": sizes,
     }

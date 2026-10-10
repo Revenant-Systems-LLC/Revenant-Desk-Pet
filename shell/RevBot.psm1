@@ -1,7 +1,7 @@
 # RevBot in PowerShell: the Revenant desk pet's shell body.
 #
 #   Import-Module <repo>\shell\RevBot.psd1
-#   revbot                 him, in colour, with what he is doing
+#   revbot                 him, in colour, with what he is doing (revbot show 16: bigger; revbot show head: just his head)
 #   revbot ask "question"  ask his Claude; the answer prints here and in his bubble
 #   revbot chat            a back-and-forth until you type /bye
 #   revbot say "text"      he says it in his speech bubble
@@ -88,10 +88,12 @@ function Import-RevBotCells {
 
 function Get-RevBotFrameLines {
     <# One frame of a clip as lines of ANSI-coloured text, left as block characters on the terminal's own background. #>
-    param([string]$Clip = 'idle', [int]$Columns = 16, [int]$Frame = 0, [switch]$Trim)
+    param([string]$Clip = 'idle', [int]$Rows = 12, [ValidateSet('body', 'head')][string]$Crop = 'body', [int]$Frame = 0, [switch]$Trim)
     if (-not (Import-RevBotCells)) { return @('(no sprite sheet: build it with tools\build_cells.py)') }
-    $size = $script:Cells.sizes | Where-Object { $_.columns -eq $Columns } | Select-Object -First 1
-    if (-not $size) { $size = $script:Cells.sizes[0] }
+    # the size of that crop nearest that many rows (a sheet built before crops existed counts as all body)
+    $sizes = @($script:Cells.sizes | Where-Object { $(if ($_.PSObject.Properties['crop']) { $_.crop } else { 'body' }) -eq $Crop })
+    if ($sizes.Count -eq 0) { $sizes = @($script:Cells.sizes) }
+    $size = $sizes | Sort-Object { [Math]::Abs($_.rows - $Rows) } | Select-Object -First 1
     $clips = $size.clips
     $c = $clips.PSObject.Properties[$Clip]
     if (-not $c) { $c = $clips.PSObject.Properties['idle'] }
@@ -140,19 +142,19 @@ function Get-RevBotDoing {
 }
 
 function Show-RevBot {
-    <# Him, in colour, with his state beside. #>
-    param([int]$Columns = 16)
+    <# Him, in colour, with his state beside: his whole figure (12 or 16 rows), or -Head for just his head. #>
+    param([int]$Rows = 12, [switch]$Head)
     $s = Get-RevBotState
     $clip = if ($s) { $s.clip } else { 'sleeping' }
     if ($clip -eq 'look') { $clip = 'idle' }
-    $lines = @(Get-RevBotFrameLines -Clip $clip -Columns $Columns -Trim)
+    $lines = @(Get-RevBotFrameLines -Clip $clip -Rows $(if ($Head) { 8 } else { $Rows }) -Crop $(if ($Head) { 'head' } else { 'body' }) -Trim)
     $side = @(
         "$($script:Esc)[1;38;2;255;153;0mRevBot$($script:Esc)[0m",
         (Get-RevBotDoing $s)
     )
     if ($s -and $s.saying) { $side += "`"$($s.saying)`"" }
     if ($s -and $s.surfaces -and $s.surfaces.Count -gt 0) { $side += "also in: $($s.surfaces -join ', ')" }
-    $pad = $Columns + 2
+    $pad = ($lines | ForEach-Object { ($_ -replace "$($script:Esc)\[[0-9;]*m", '').Length } | Measure-Object -Maximum).Maximum + 2
     $start = [Math]::Max(0, $lines.Count - $side.Count)
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $plain = ($lines[$i] -replace "$($script:Esc)\[[0-9;]*m", '')
@@ -189,7 +191,7 @@ function Invoke-RevBotAsk {
 function Enter-RevBotChat {
     <# A conversation in the terminal; /bye ends it. #>
     if (-not (Get-RevBotState)) { Write-Warning 'RevBot is not running (revbot start).'; return }
-    Show-RevBot -Columns 12
+    Show-RevBot -Head
     Write-Host "Talk to RevBot. /bye ends it."
     while ($true) {
         $line = Read-Host 'you'
@@ -247,9 +249,9 @@ function Invoke-RevBot {
         'follow' { Send-RevBot ('follow ' + ($rest -join ' ')) }
         'back'  { Send-RevBot 'comeback' }
         'start' { Start-RevBot }
-        'show'  { Show-RevBot -Columns $(if ($rest.Count) { [int]$rest[0] } else { 16 }) }
+        'show'  { if ($rest.Count -and $rest[0] -eq 'head') { Show-RevBot -Head } else { Show-RevBot -Rows $(if ($rest.Count) { [int]$rest[0] } else { 12 }) } }
         'where' { $s = Get-RevBotState; if ($s) { $s | Format-List } else { 'not running' } }
-        default { Write-Host "revbot [ask TEXT | chat | say TEXT | play CLIP | state NAME | clear | talk | start | show [12|16|24] | where | follow on|off | back]" }
+        default { Write-Host "revbot [ask TEXT | chat | say TEXT | play CLIP | state NAME | clear | talk | start | show [12|16|head] | where | follow on|off | back]" }
     }
 }
 

@@ -3,7 +3,8 @@
 
 export type Frame = { g: string; f: string; b: string }
 export type Clip = { fps: number; loop: boolean; frames: Frame[] }
-export type Size = { columns: number; rows: number; clips: Record<string, Clip> }
+/** crop: 'body' (his whole figure) or 'head' (head and antenna only); a sheet built before crops existed has none. */
+export type Size = { crop?: string; columns: number; rows: number; clips: Record<string, Clip> }
 export type Sheet = { pet: string; palette: number[]; sizes: Size[] }
 
 const ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-_'
@@ -30,6 +31,26 @@ export function sizeFor(sheet: Sheet, columns: number): Size {
     if (Math.abs(s.columns - columns) < Math.abs(best.columns - columns)) best = s
   }
   return best
+}
+
+/** The size of this crop ('body' or 'head') nearest this many rows; any crop when the sheet has none of it. */
+export function pick(sheet: Sheet, crop: string, rows: number): Size {
+  const same = sheet.sizes.filter(s => (s.crop ?? 'body') === crop)
+  let best: Size | null = null
+  for (const s of same.length > 0 ? same : sheet.sizes) {
+    if (!best || Math.abs(s.rows - rows) < Math.abs(best.rows - rows)) best = s
+  }
+  return best ?? sheet.sizes[0]!
+}
+
+/**
+ * What the spinner draws for a spinner style and band mode. 'auto' keeps him in
+ * one place at a time: his head in the spinner only when the band (which shows
+ * his whole figure) is off, otherwise the one-line face.
+ */
+export function spinnerShows(style: string, band: string): 'sprite' | 'face' | 'off' {
+  if (style === 'sprite' || style === 'face' || style === 'off') return style
+  return band === 'off' ? 'sprite' : 'face'
 }
 
 /** A clip of this size, falling back the way the desktop pet does (Atlas.Clip). */

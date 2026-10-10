@@ -31,3 +31,22 @@ PowerShell and later the web. "Clippy 2.0 but not annoying."
 ## Review
 All of 1-5, 7-9 built, tested and pushed to main; 6 (a standalone console
 body) not started. Next steps and what waits on Dave: HANDOFF.md.
+
+# 2026-10-10: the terminal sprite, then quiet by contract
+
+Dave saw the terminal mod live: two of him (spinner and band), both a smudge.
+
+- [x] Why: the crop box was every clip's union (244x294 art px), so at 16
+      columns his body was about 8x11 pixels; box-averaging smeared his black
+      outline into the grey and lost the eye glints and stripes.
+- [x] `tools/build_cells.py`: crops framed on the idle pose (body; head only),
+      sized by rows; each pixel takes the telling colour (outline left out,
+      bright and saturated colours count extra), greys lifted a little.
+- [x] `tools/preview_cells.py`: draws cells.json as a terminal shows it.
+- [x] Mod: band = whole figure (12/16 rows); spinner `auto` = his head only
+      when the band is off, else the one-line face. Never two of him.
+- [x] PowerShell module: picks sizes by crop and rows (`revbot show head`).
+- [x] `claude plugin validate`, `claude plugin test` (6 pass).
+- [ ] Deploy to dist (Dave's OK) and look at it live.
+- [ ] The real fix: hand-drawn pixel-art RevBot at terminal size (Dave's art).
+- [ ] Quiet by contract (HANDOFF Next 1), design agreed with the advisor.
