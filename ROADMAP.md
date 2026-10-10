@@ -33,6 +33,26 @@ then the AI moving between them depending on what you are doing.
   so what you told him in one body he knows in the next; "where is the
   user" (active window, idle time) deciding which body speaks.
 
+## 0b. Voice (Dave, 2026-10-09: "pretty damn good speech-to-text")
+
+For the flow Dave imagines, talking to him has to be by voice; a text box
+pulls you out of what you were doing. All of it local and on the CPU (zero
+VRAM, the standing rule on this machine):
+
+- **In:** a push-to-talk key (and later a wake word) into local Whisper
+  (whisper.cpp or faster-whisper, the small English model runs faster than
+  real time on the 5800XT). The text goes over the pipe as `ask TEXT`, so
+  every body gets it for free.
+- **Out:** his reply in the bubble as now, plus a voice: Piper on CPU, or the
+  cloned voice from Revenant-Echo, which already has this wake-word, STT and
+  TTS pipeline and is the piece to reuse rather than rebuild.
+- Opt-in, with a visible "listening" state on every body (the mic is never
+  open without him showing it). Dave's STT today (Wispr Flow) is about 80%
+  accurate on his dictation; whatever is chosen gets measured against that on
+  his own voice before it ships.
+- Not started: it means pulling models and running inference, which is
+  Dave's call to start.
+
 ## 1. A small LLM inside
 
 - Around 1.5B parameters, so it runs on weak PCs.

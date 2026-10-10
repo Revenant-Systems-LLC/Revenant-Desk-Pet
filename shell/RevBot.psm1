@@ -18,6 +18,8 @@
 
 Set-StrictMode -Version 2
 
+# Where this module lives: $PSScriptRoot is empty inside the functions when PowerShell calls them later, so take it now.
+$script:ModuleRoot = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
 $script:Esc = [char]27
 $script:Cells = $null
 $script:Palette = $null
@@ -27,7 +29,7 @@ $script:OldPrompt = $null
 function Get-RevBotHome {
     <# The folder holding DesktopPet.exe, hook\revbot-hook.exe and state.json. #>
     if ($env:REVBOT_HOME) { return $env:REVBOT_HOME }
-    $parent = Split-Path $PSScriptRoot -Parent
+    $parent = Split-Path $script:ModuleRoot -Parent
     foreach ($dir in @($parent, (Join-Path $parent 'dist'))) {   # dist\shell\ (deployed) or <repo>\shell        if (Test-Path (Join-Path $dir 'DesktopPet.exe')) { return (Resolve-Path $dir).Path }
     }
     return (Join-Path $parent 'dist')
@@ -68,7 +70,7 @@ function Import-RevBotCells {
     if ($script:Cells) { return $true }
     $candidates = @(
         (Join-Path (Get-RevBotHome) 'mod\revbot\cells.json'),
-        (Join-Path (Split-Path $PSScriptRoot -Parent) 'mod\revbot\cells.json')
+        (Join-Path (Split-Path $script:ModuleRoot -Parent) 'mod\revbot\cells.json')
     )
     foreach ($c in $candidates) {
         if (Test-Path $c) {
