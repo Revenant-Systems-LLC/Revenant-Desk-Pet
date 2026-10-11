@@ -51,6 +51,8 @@
     <button type="button" data-play="happy">Celebrate</button>
     <button type="button" data-play="think">Think</button>
     <button type="button" data-say="Hello from the web!">Say hi</button>
+    <button type="button" id="quiet">Quiet for an hour</button>
+    <button type="button" id="hush">Hush</button>
   </div>
   <div class="log" id="log"></div>
   <footer>Served by the desktop pet on this PC only. This tab is one of his bodies while it is open.</footer>
@@ -115,6 +117,14 @@
     }
   }
 
+  function quietWords(s) {
+    if (!s || !s.running) return '';
+    if (s.dismissed) return 'hidden on the desk';
+    if (s.quiet && s.quietUntil) return 'quiet until ' + new Date(s.quietUntil).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    if (s.chatter === 'silent') return 'silent unless you ask';
+    return '';
+  }
+
   function doingWords(s) {
     if (!s || !s.running) return 'is away (start the desktop pet)';
     if (s.claude === 'waiting') return 'needs your OK on something';
@@ -145,7 +155,9 @@
       state = s;
       const next = s.running ? (s.clip === 'look' ? 'idle' : s.clip) : 'sleeping';
       if (next !== clip) { clip = next; clipStart = performance.now(); }
-      $('doing').textContent = doingWords(s);
+      const q = quietWords(s);
+      $('doing').textContent = doingWords(s) + (q ? ' (' + q + ')' : '');
+      $('quiet').textContent = s.quiet ? 'Talk again' : 'Quiet for an hour';
       $('where').innerHTML = whereWords(s);
       const b = $('bubble');
       if (s.saying) { b.textContent = s.saying; b.classList.add('on'); } else b.classList.remove('on');
@@ -189,6 +201,8 @@
   });
   for (const b of document.querySelectorAll('[data-play]')) b.addEventListener('click', () => post('/play', b.dataset.play));
   for (const b of document.querySelectorAll('[data-say]')) b.addEventListener('click', () => post('/say', b.dataset.say));
+  $('quiet').addEventListener('click', () => post('/quiet', state && state.quiet ? 'off' : ''));
+  $('hush').addEventListener('click', () => post('/hush', ''));
 
   requestAnimationFrame(draw); // draws nothing until the art is in
   loadArt();

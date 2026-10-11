@@ -25,6 +25,7 @@ sealed class SpeechBubble : IDisposable
     string? text;            // the line being shown
     string? stream;          // a reply arriving piece by piece: all of it so far
     bool streamOpen;         // more of it is coming
+    bool dropStream;         // hushed while it was coming: ignore the rest of it
     bool showingStream;      // `text` is that reply
     List<string> lines = new(); // it, already broken into lines for the current size
     int shown;               // letters typed so far
@@ -45,11 +46,26 @@ sealed class SpeechBubble : IDisposable
     /// <summary>The line on screen right now (all of it, not just the letters typed so far), or null.</summary>
     public string? Saying => text;
 
-    public void Say(string line)
+    /// <param name="maxChars">Cut longer lines to this (with "..."); at most the bubble's own limit.</param>
+    public void Say(string line, int maxChars = MaxLineChars)
     {
-        line = Normalize(line, MaxLineChars);
+        line = Normalize(line, Math.Clamp(maxChars, 8, MaxLineChars));
         if (line.Length > 0)
             queue.Enqueue(line);
+    }
+
+    /// <summary>
+    /// Hush: the line showing, the lines waiting and a reply still arriving all go,
+    /// and none of it comes back later (the rest of that reply is dropped as it arrives).
+    /// </summary>
+    public void Clear()
+    {
+        dropStream = streamOpen;
+        queue.Clear();
+        text = null;
+        stream = null;
+        streamOpen = showingStream = false;
+        Hide();
     }
 
     /// <summary>
@@ -59,6 +75,11 @@ sealed class SpeechBubble : IDisposable
     /// </summary>
     public void Stream(string soFar, bool done)
     {
+        if (dropStream)
+        {
+            dropStream = !done; // hushed part way through: let the rest of it go by
+            return;
+        }
         stream = Normalize(soFar, MaxStreamChars);
         streamOpen = !done;
         if (stream.Length == 0 && done)

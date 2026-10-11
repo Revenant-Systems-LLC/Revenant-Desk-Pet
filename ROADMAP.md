@@ -29,6 +29,14 @@ then the AI moving between them depending on what you are doing.
   walks to the terminal window, hops in, and drops back out of it when the
   session ends or the window closes. The web body: a page on
   http://localhost:7474/ drawn from his real sprite sheet, with chat.
+- Built 2026-10-10: quiet by contract ("Clippy 2.0 but not as annoying"):
+  he never talks on a timer; a dial for how much he says unasked (silent,
+  when something needs you, chatty; default the middle one), quiet for an
+  hour that outlasts a restart, hush, a hide/show hotkey (Ctrl+Alt+Shift+R),
+  a Claude Code wait mentioned once and never again while it lasts. All in
+  state.json; the terminal band, PowerShell and the web page show it and can
+  set it. The terminal sprite was redone the same night (head-only spinner,
+  whole figure in the band, never two of him).
 - Next: one shared memory so what you told him in one body he knows in the
   next; "where is the user" (active window, idle time) deciding which body
   speaks; the web body reachable from a phone on the LAN (needs an explicit

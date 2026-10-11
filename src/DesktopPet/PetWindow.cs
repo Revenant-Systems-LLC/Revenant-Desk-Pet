@@ -11,6 +11,9 @@ sealed class PetWindow : Form
 
     public event Action? DpiChangedRaw;
 
+    /// <summary>A hotkey this window registered was pressed (its id).</summary>
+    public event Action<int>? HotKey;
+
     public PetWindow()
     {
         FormBorderStyle = FormBorderStyle.None;
@@ -50,6 +53,9 @@ sealed class PetWindow : Form
                 // sprite size is ours to decide, so just report the change.
                 m.Result = IntPtr.Zero;
                 DpiChangedRaw?.Invoke();
+                return;
+            case Native.WM_HOTKEY:
+                HotKey?.Invoke((int)m.WParam);
                 return;
         }
         base.WndProc(ref m);

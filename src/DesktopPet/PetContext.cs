@@ -86,7 +86,7 @@ sealed class PetContext : ApplicationContext
     Native.RECT petWorkSeen;
     DesktopTerrain? terrain;
     readonly int? friendOf;      // a friend pet: its inviter's process id
-    double nextFriendCheckAt;
+    double nextFriendCheckAt, nextDismissCheckAt;
     double nextTerrainAt;
     ToolStripMenuItem terrainItem = null!;
     ToolStripMenuItem chaseItem = null!;
@@ -95,7 +95,6 @@ sealed class PetContext : ApplicationContext
     readonly ThinkingMath math = new();              // math floating round his head while Claude thinks
     readonly Dictionary<string, double> thinkingSince = new(); // sessions thinking over a prompt, since when
     bool chatWaiting;                                // his own Claude hasn't started answering yet
-    double lastAskAt = double.NegativeInfinity;
     // Talking to the pet's own Claude (main pet only)
     IChatBrain? chat;                                // who the pet talks with (settings.ChatBrain)
     ClaudeChat? Claude => chat as ClaudeChat;
@@ -105,7 +104,16 @@ sealed class PetContext : ApplicationContext
     ChatBox? chatBox;
     PermissionPrompt? prompt;                          // his Claude wants to change something: Yes / No
     readonly Queue<ClaudeChat.Ask> asks = new();
-    double dropSayUntil = double.NegativeInfinity; // his own Claude just finished: its Stop hook's "say" repeats the streamed reply
+    double dropSayUntil = double.NegativeInfinity; // his own Claude just finished: its Stop hook's remark repeats the streamed reply
+
+    // The quiet contract (Quiet.cs): what he may say on his own, a quiet spell, and hiding him with a hotkey.
+    bool dismissed;                                  // you hid him: off the desk, saying nothing, until you show him again
+    readonly WaitAlerts waitAlerts = new();          // each Claude Code wait on your OK is mentioned once
+    const int HideHotkeyId = 1;
+    bool hotkeyRegistered;
+    ToolStripMenuItem hideItem = null!, quietItem = null!, hushItem = null!;
+    readonly List<(ToolStripMenuItem Item, string Level)> chatterItems = new();
+    bool QuietNow => settings.QuietUntil is { } q && q > DateTimeOffset.Now;
 
     // Watching you type: only "a key was pressed recently" (the cursor didn't
     // move, yet there was input) and which program is in front. Never which keys.
@@ -182,6 +190,12 @@ sealed class PetContext : ApplicationContext
                 web = WebBody.TryStart(Math.Clamp(settings.WebPort, 1024, 65535), OnAiLine, () => petId, stateFile.Path_);
             UseBrain(settings.ChatBrain, announce: false);
             Rescan();
+            window.HotKey += id =>
+            {
+                if (id == HideHotkeyId)
+                    SetDismissed(!dismissed);
+            };
+            RegisterHideHotkey();
         }
 
         frameClock = new FrameClock(window, () => OnTick(null, EventArgs.Empty));
@@ -200,6 +214,35 @@ sealed class PetContext : ApplicationContext
             double dt = Math.Clamp(t - lastT, 0, 0.1);
             lastT = t;
 
+            if (settings.QuietUntil is { } until && until <= DateTimeOffset.Now)
+            {
+                settings.QuietUntil = null; // the spell is over; he says nothing about it
+                settings.Save();
+                Log.Info("quiet spell over");
+            }
+            if (friendOf is not null && t >= nextDismissCheckAt)
+            {
+                nextDismissCheckAt = t + 1;
+                SetDismissed(MainPetDismissed()); // a friend hides and shows with the pet that invited it
+            }
+            if (dismissed)
+            {
+                // Hidden by you: the links and his chat keep going (state.json stays true); nothing is drawn or said.
+                TickAiLink(t);
+                chat?.Tick();
+                if (friendOf is int host && t >= nextFriendCheckAt)
+                {
+                    nextFriendCheckAt = t + 2;
+                    if (!ProcessAlive(host))
+                    {
+                        Quit();
+                        return;
+                    }
+                }
+                stateFile.Update(Snapshot(), t);
+                stateFile.Tick(t);
+                return;
+            }
             if (awayTo is not null)
             {
                 TickAway(t);
@@ -347,6 +390,8 @@ sealed class PetContext : ApplicationContext
         next.ReplyGrowing += text =>
         {
             chatWaiting = false;
+            if (dismissed)
+                return; // hidden: the answer still reaches state.json (his other bodies), not the bubble
             bubble.Sound = settings.TalkSounds;
             bubble.Stream(text, done: false);
         };
@@ -356,6 +401,8 @@ sealed class PetContext : ApplicationContext
             lastReply = string.IsNullOrWhiteSpace(text) ? null : text;
             replyCount++;
             bubble.Stream(text, done: true);
+            if (dismissed)
+                bubble.Clear();
         };
         if (next is ClaudeChat claude)
         {
@@ -499,26 +546,130 @@ sealed class PetContext : ApplicationContext
         prompt = box;
         if (lastSprite is Sprite s)
             box.Place(lastX + (int)Math.Round(s.W * 0.5), lastY, pet.Work);
-        if (!hidden)
+        if (OnDesk)
             box.Show();
     }
 
-    /// <summary>Say something in a speech bubble above the pet (upper right), typed out a letter at a time.</summary>
-    public void Say(string text)
+    /// <summary>He is on the desk to be seen: no fullscreen app over him, not hidden by you, not in another body.</summary>
+    bool OnDesk => !hidden && !dismissed && awayTo is null;
+
+    /// <summary>
+    /// Say something in a speech bubble above the pet (upper right), typed out a letter at a time,
+    /// if the quiet contract lets a line of this kind through right now (Quiet.cs).
+    /// </summary>
+    public void Say(string text, Speech kind = Speech.Answer)
     {
+        if (!Quiet.Allows(kind, settings.Chatter, QuietNow, dismissed))
+        {
+            Log.Info($"kept quiet: a {kind.ToString().ToLowerInvariant()} ({settings.Chatter}{(QuietNow ? ", quiet spell" : "")}{(dismissed ? ", hidden" : "")})");
+            return;
+        }
         bubble.Sound = settings.TalkSounds;
-        bubble.Say(text);
+        bubble.Say(text, kind == Speech.Remark ? Quiet.RemarkMaxChars : int.MaxValue);
         Log.Info($"says something ({text.Length} characters)"); // never the words themselves
     }
 
-    /// <summary>Claude Code is waiting on a permission prompt: say so (not more than once every 45 s).</summary>
-    void AskForOk()
+    /// <summary>A Claude Code session is waiting on a permission prompt: say so, once per wait.</summary>
+    void AskForOk(string session)
     {
-        double t = clock.Elapsed.TotalSeconds;
-        if (t - lastAskAt < 45)
+        if (waitAlerts.ShouldAlert(session, clock.Elapsed.TotalSeconds))
+            Say("Hey Dave, I need your OK on something.", Speech.Alert);
+    }
+
+    /// <summary>Hush: stop the line he is saying and drop what was waiting to be said.</summary>
+    void Hush()
+    {
+        bubble.Clear();
+        Log.Info("hushed");
+    }
+
+    /// <summary>"quiet" (an hour), "quiet 30" (minutes), "quiet off". A spell starting hushes him too.</summary>
+    void SetQuiet(string? arg)
+    {
+        if (!Quiet.TryUntil(arg, DateTimeOffset.Now, out var until))
+        {
+            Log.Info($"quiet: ignored '{Trim(arg ?? "")}'");
             return;
-        lastAskAt = t;
-        Say("Hey Dave, I need your OK on something.");
+        }
+        settings.QuietUntil = until;
+        settings.Save();
+        if (until is not null)
+            Hush();
+        Log.Info(until is { } u ? $"quiet until {u:HH:mm}" : "quiet spell ended");
+    }
+
+    void SetChatter(string level)
+    {
+        settings.Chatter = Quiet.Level(level);
+        settings.Save();
+        Log.Info($"chatter: {settings.Chatter}");
+    }
+
+    /// <summary>Hide him (the hotkey, the menu, "hide") or bring him back. Hiding also hushes him.</summary>
+    void SetDismissed(bool on)
+    {
+        if (on == dismissed || quitting)
+            return;
+        dismissed = on;
+        if (on)
+        {
+            if (goingTo is not null)
+                StopFollowing();
+            if (dragging)
+                FinishDrag();
+            pressed = false;
+            window.Hide();
+            bubble.Clear();
+            math.Hide();
+            prompt?.Hide();     // waits, unanswered, until he is back
+            chatBox?.Hide();    // keeps what you were typing
+            if (frameClock is not null)
+                frameClock.Slow = true;
+            Log.Info("hidden by you");
+            return;
+        }
+        if (!hidden && awayTo is null)
+        {
+            window.Show();
+            prompt?.Show();
+            chatBox?.Show();
+            ForceRedraw();
+            if (frameClock is not null)
+                frameClock.Slow = false;
+        }
+        Log.Info("shown again");
+    }
+
+    /// <summary>A friend pet: is the pet that invited it hidden right now? (Its state.json, next to this exe.)</summary>
+    static bool MainPetDismissed()
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "state.json")));
+            var root = doc.RootElement;
+            return root.TryGetProperty("running", out var r) && r.ValueKind == System.Text.Json.JsonValueKind.True &&
+                   root.TryGetProperty("dismissed", out var d) && d.ValueKind == System.Text.Json.JsonValueKind.True;
+        }
+        catch (Exception)
+        {
+            return false; // missing, mid-write, or an older pet: stay as we are next time round
+        }
+    }
+
+    /// <summary>The system-wide hide/show key from settings (main pet only). Taken by another program: logged, and the menu still works.</summary>
+    void RegisterHideHotkey()
+    {
+        string spec = settings.HideHotkey;
+        if (!Quiet.TryParseHotkey(spec, out uint mods, out uint key))
+        {
+            if (!string.IsNullOrWhiteSpace(spec) && !spec.Equals("off", StringComparison.OrdinalIgnoreCase))
+                Log.Info($"hide hotkey '{Trim(spec)}' not understood (try Ctrl+Alt+Shift+R)");
+            return;
+        }
+        hotkeyRegistered = Native.RegisterHotKey(window.Handle, HideHotkeyId, mods | Native.MOD_NOREPEAT, key);
+        Log.Info(hotkeyRegistered
+            ? $"hide hotkey: {spec}"
+            : $"hide hotkey {spec} is in use by another program (error {System.Runtime.InteropServices.Marshal.GetLastPInvokeError()}); set HideHotkey in settings.json");
     }
 
     void SayHello()
@@ -611,7 +762,8 @@ sealed class PetContext : ApplicationContext
     /// <summary>
     /// One line from the AI link, on the UI thread. Hook lines look like
     /// "hook PreToolUse session=ID tool=Edit" or "hook Notification session=ID type=permission_prompt";
-    /// direct commands are "say TEXT", "talk" (open the chat box), "ask TEXT" (to his own Claude), "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "invite ID", "sendhome", "jumpup", "ledges", "clear" and "ping".
+    /// direct commands are "say TEXT", "remark TEXT" (unasked: only when chatty), "quiet [MINUTES|off]",
+    /// "chatter silent|events|chatty", "hush", "hide", "show", "talk" (open the chat box), "ask TEXT" (to his own Claude), "state NAME", "play NAME", "pet ID", "fling VX VY", "chase [on|off]", "invite ID", "sendhome", "jumpup", "ledges", "clear" and "ping".
     /// </summary>
     void OnAiLine(string line)
     {
@@ -685,13 +837,29 @@ sealed class PetContext : ApplicationContext
                 chat.Send(line[(line.IndexOf(' ') + 1)..]); // as if typed into the chat box
                 pet.Play("think");
                 break;
-            case "say" when line.Length > 4:
+            case "say" when line.Length > 4:      // something you sent him to say: an answer
+            case "remark" when line.Length > 7:   // the Stop hook (revbot-hook --speak): Claude's reply, unasked
                 if (clock.Elapsed.TotalSeconds < dropSayUntil)
                 {
-                    dropSayUntil = double.NegativeInfinity; // already said, as it streamed
+                    dropSayUntil = double.NegativeInfinity; // his own Claude: already said, as it streamed
                     break;
                 }
-                Say(line[(line.IndexOf(' ') + 1)..]);
+                Say(line[(line.IndexOf(' ') + 1)..], verb == "remark" ? Speech.Remark : Speech.Answer);
+                break;
+            case "quiet":
+                SetQuiet(arg);
+                break;
+            case "chatter" when arg is not null:
+                SetChatter(arg);
+                break;
+            case "hush":
+                Hush();
+                break;
+            case "hide" when friendOf is null:
+                SetDismissed(true);
+                break;
+            case "show" when friendOf is null:
+                SetDismissed(false);
                 break;
             case "chase":
                 pet.SetChasing(arg?.ToLowerInvariant() switch { "on" => true, "off" => false, _ => !pet.Chasing });
@@ -747,7 +915,7 @@ sealed class PetContext : ApplicationContext
         }
         surfaces[key] = new Surface { Since = t, LastAt = t };
         Log.Info($"surface here: {key} ({surfaces.Count} now)");
-        if (hidden || awayTo is not null)
+        if (!OnDesk)
             return;
         if (settings.FollowSurfaces && friendOf is null && name == "terminal" && goingTo is null && StartFollowing(key))
             return;
@@ -876,11 +1044,14 @@ sealed class PetContext : ApplicationContext
             x = (r.Left + r.Right) / 2.0;
             height = Math.Clamp(pet.GroundY - r.Bottom, 60 * scale, 700 * scale);
         }
-        window.Show();
-        if (frameClock is not null)
-            frameClock.Slow = false;
-        ForceRedraw();
-        prompt?.Show();
+        if (!dismissed) // hidden by you while he was in there: he comes back to the desk, but stays hidden
+        {
+            window.Show();
+            if (frameClock is not null)
+                frameClock.Slow = false;
+            ForceRedraw();
+            prompt?.Show();
+        }
         pet.DropIn(x, pet.Work, height);
         RefreshMonitor(force: false);
         Log.Info($"came back from {from}");
@@ -903,7 +1074,10 @@ sealed class PetContext : ApplicationContext
         Surfaces: string.Join(',', surfaces.Keys.Order()),
         X: (int)Math.Round(pet.X),
         Y: (int)Math.Round(pet.GroundY),
-        Hidden: hidden || awayTo is not null);
+        Hidden: !OnDesk,
+        Chatter: settings.Chatter,
+        QuietUntil: QuietNow ? settings.QuietUntil!.Value.ToString("yyyy-MM-dd'T'HH:mm:sszzz") : null,
+        Dismissed: dismissed);
 
     void OnHook(string hookEvent, string session, string? tool, string? type)
     {
@@ -938,12 +1112,12 @@ sealed class PetContext : ApplicationContext
             case "PermissionRequest":
                 SessionHold(session, "waiting");           // hand up: needs your OK
                 if (session != Claude?.SessionId)
-                    AskForOk();                            // his own Claude's request is already up on screen
+                    AskForOk(session);                     // his own Claude's request is already up on screen
                 break;
             case "Notification" when type == "permission_prompt":
                 SessionHold(session, "waiting");
                 if (session != Claude?.SessionId)
-                    AskForOk();
+                    AskForOk(session);
                 break;
             case "Notification" when type == "idle_prompt":
                 aiSessions.Remove(session);
@@ -1064,6 +1238,8 @@ sealed class PetContext : ApplicationContext
             aiSessions.Clear();
             return;
         }
+        // A session that stopped waiting on your OK (answered, moved on, gone): its next wait is news again.
+        waitAlerts.KeepOnly(id => aiSessions.TryGetValue(id, out var w) && w.Hold == "waiting");
         // Sessions that went quiet (Claude Code closed or crashed) stand down.
         var gone = aiSessions
             .Where(kv => t - kv.Value.LastAt > (kv.Value.Hold == "waiting" ? AiWaitingQuietSeconds : AiQuietSeconds))
@@ -1305,6 +1481,8 @@ sealed class PetContext : ApplicationContext
         else if (!fullscreen && hidden)
         {
             hidden = false;
+            if (dismissed)
+                return; // hidden by you as well: he stays hidden
             window.Show();
             prompt?.Show();
             ForceRedraw();
@@ -1523,6 +1701,29 @@ sealed class PetContext : ApplicationContext
             settings.Save();
         });
 
+        // The quiet contract: how much he says unasked, a quiet spell, hush, and the sounds.
+        var talking = new ToolStripMenuItem("Talking");
+        foreach (var (label, level) in new[]
+        {
+            ("Silent: only when you ask him", Quiet.Silent),
+            ("When something needs you", Quiet.Events),
+            ("Chatty: also reads out Claude's replies", Quiet.Chatty),
+        })
+        {
+            var item = new ToolStripMenuItem(label, null, (_, _) => SetChatter(level));
+            chatterItems.Add((item, level));
+            talking.DropDownItems.Add(item);
+        }
+        var chatterSeparator = new ToolStripSeparator();
+        talking.DropDownItems.Add(chatterSeparator);
+        quietItem = new ToolStripMenuItem("Quiet for an hour", null, (_, _) => SetQuiet(QuietNow ? "off" : null));
+        hushItem = new ToolStripMenuItem("Hush", null, (_, _) => Hush());
+        talking.DropDownItems.Add(quietItem);
+        talking.DropDownItems.Add(hushItem);
+        talking.DropDownItems.Add(new ToolStripSeparator());
+        talking.DropDownItems.Add(talkSoundItem);
+        hideItem = new ToolStripMenuItem("Hide", null, (_, _) => window.BeginInvoke(() => SetDismissed(!dismissed)));
+
         var friendsMenu = new ToolStripMenuItem("Friends");
         foreach (var (id, name) in Atlas.BuiltInPets)
             friendsMenu.DropDownItems.Add(new ToolStripMenuItem($"Invite {name}", null, (_, _) => InviteFriend(id)) { Tag = id });
@@ -1546,11 +1747,12 @@ sealed class PetContext : ApplicationContext
             petMenu,
             friendsMenu,
             chaseItem,
-            talkSoundItem,
+            talking,
             stayPutItem,
             terrainItem,
             followItem,
             new ToolStripMenuItem("Come here", null, (_, _) => ComeHere()),
+            hideItem,
         });
         if (friendOf is null)
         {
@@ -1576,6 +1778,18 @@ sealed class PetContext : ApplicationContext
             followItem.Checked = settings.FollowSurfaces;
             chaseItem.Checked = pet.Chasing;
             talkSoundItem.Checked = settings.TalkSounds;
+            foreach (var (item, level) in chatterItems)
+            {
+                item.Checked = settings.Chatter == level;
+                item.Visible = friendOf is null; // a friend hears nothing from Claude Code, so it has nothing to say unasked
+            }
+            chatterSeparator.Visible = quietItem.Visible = friendOf is null;
+            quietItem.Text = QuietNow ? $"Quiet until {settings.QuietUntil!.Value.LocalDateTime:h:mm tt} (talk again)" : "Quiet for an hour";
+            quietItem.Checked = QuietNow;
+            hushItem.Enabled = bubble.Busy;
+            hideItem.Visible = friendOf is null; // a friend hides and shows with the pet that invited it
+            hideItem.Text = dismissed ? "Show him again" : "Hide";
+            hideItem.ShortcutKeyDisplayString = hotkeyRegistered ? settings.HideHotkey : null;
             foreach (var (item, value) in sizeItems)
                 item.Checked = Math.Abs(value - settings.Size) < 1e-6;
             FillActionMenus(actions, states);
@@ -1763,6 +1977,11 @@ sealed class PetContext : ApplicationContext
 
     void ComeHere()
     {
+        if (dismissed)
+        {
+            SetDismissed(false); // the tray icon's double-click brings a hidden pet back
+            return;
+        }
         if (awayTo is not null)
         {
             ComeBack();
@@ -1793,6 +2012,8 @@ sealed class PetContext : ApplicationContext
         settings.StayPut = pet.StayPut;
         settings.Save();
         stateFile.Clear();
+        if (hotkeyRegistered && window.IsHandleCreated && !window.IsDisposed)
+            Native.UnregisterHotKey(window.Handle, HideHotkeyId); // Windows would free it with the window anyway
 
         frameClock?.Dispose();
         chatBox?.Close();

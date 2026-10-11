@@ -60,12 +60,15 @@ Wire it up with async hooks in `~/.claude/settings.json`, one entry per event
 "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "\"M:/Projects/Desktop-Pet/dist/revbot-hook.exe\"", "async": true, "timeout": 10 }] }]
 ```
 
-For the `Stop` hook use `revbot-hook.exe --speak`: besides the event, the pet
-says the opening of Claude's last reply (the first sentence or two, up to about
-160 characters, markdown stripped) in its speech bubble. It reads that reply
-from the transcript Claude Code points the hook to, sends it only over the
-local pipe, and writes it nowhere. When Claude waits on a permission prompt he
-says "Hey Dave, I need your OK on something." (at most every 45 s).
+For the `Stop` hook use `revbot-hook.exe --speak`: besides the event, it sends
+the opening of Claude's last reply (the first sentence or two, up to about 160
+characters, markdown stripped) as a `remark`, which the pet says in its speech
+bubble only when set to chatty (see "Quiet by contract" below). It reads that
+reply from the transcript Claude Code points the hook to, sends it only over
+the local pipe, and writes it nowhere. When a Claude Code session waits on a
+permission prompt he says "Hey Dave, I need your OK on something." once for
+that wait, never again while it lasts (and one line for several sessions that
+start waiting within 45 s of each other).
 
 Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
 `PostToolUse` (matcher `*`), `PostToolUseFailure`, `PermissionRequest`,
@@ -75,7 +78,9 @@ Events used: `SessionStart`, `UserPromptSubmit`, `PreToolUse` (matcher `*`),
 Send commands by hand: `revbot-hook --send "state working"`, `"play wave"`,
 `"pet damien"`, `"fling 900 -700"` (throw it at that speed, px/s), `"jumpup"`
 (jump onto a window top within reach), `"chase on"` / `"chase off"`, `"invite damien"`, `"sendhome"`, `"ledges"` (log the window tops it can
-see, positions only), `"clear"`, `"ping"`.
+see, positions only), `"clear"`, `"ping"`, and the quiet contract's `"quiet"`
+(an hour), `"quiet 30"`, `"quiet off"`, `"chatter silent|events|chatty"`,
+`"hush"`, `"hide"`, `"show"`.
 
 ## Controls
 
@@ -84,7 +89,8 @@ see, positions only), `"clear"`, `"ping"`.
 | Left click | a random reaction (jump, wave, shrug, sometimes a mech move) |
 | Left drag | pick it up; let go to drop it (big drops end in a fall-apart). Throw it hard at a side where another monitor sits and it flies onto that screen, if it is high enough to clear that screen's floor |
 | Shake it while holding it | four quick swings back and forth: when you let go and it lands, it's dizzy and wobbles for a few seconds |
-| Right click, or the tray icon | menu: actions, held states, size, pet, friends, chase the mouse, stay put, climb on windows, come here, exit |
+| Right click, or the tray icon | menu: actions, held states, size, pet, friends, chase the mouse, talking, stay put, climb on windows, come here, hide, exit |
+| Ctrl+Alt+Shift+R (anywhere) | hide him, and again to bring him back (`HideHotkey` in `settings.json`; `""` for none). The tray icon stays; its double-click also brings him back |
 | Friends > Invite Damien | a second pet joins, in its own process next to this one: they look at each other, wave when they meet, sometimes go over to visit, and stop to say hello instead of walking through each other (then walk on past). "Send friends home" closes them; they also leave when the main pet exits |
 | "Chase the mouse" | he runs after the cursor along whatever he stands on, jumps for it when it's just above his head, and cheers when he reaches it; click him to swat him away (in mid-jump too). Damien floats after it. Pretend only: the real cursor is never moved. Overrides "Stay put" while on |
 | Tray icon double-click | "come here": drops it onto the middle of the main monitor |
@@ -101,15 +107,18 @@ falls asleep, and it wakes up when you come back.
 
 All go next to the exe, never anywhere else:
 
-- `settings.json`: size, stay-put, last position, which pet (a friend pet
-  keeps its own `settings.<pet>.json` and `logs\pet.<pet>.log`)
+- `settings.json`: size, stay-put, last position, which pet, how much he
+  says unasked (`Chatter`), a quiet spell's end (`QuietUntil`), the hide key
+  (`HideHotkey`) (a friend pet keeps its own `settings.<pet>.json` and
+  `logs\pet.<pet>.log`)
 - `logs\pet.log`: state changes and errors, capped at two 1 MB files
 - `state.json`: what he is doing right now, for his other bodies (below).
   Rewritten only when something changes, at most ten times a second, and
   marked `running: false` on exit. It holds the clip playing, his mode, the
   held state, what Claude Code is doing across sessions, the line in his speech
   bubble, his chat's last answer and a counter of answers, which brain he talks
-  with, which bodies have announced themselves, and where his feet are. The
+  with, which bodies have announced themselves, where his feet are, and the
+  quiet contract (`chatter`, `quiet`, `quietUntil`, `dismissed`). The
   bubble line and the last answer are the one place his words touch the disk;
   they are overwritten by the next ones and cleared when he exits. The log
   still never holds his words.
@@ -140,12 +149,11 @@ keep running and `state.json` says `where: terminal:<session>`.
 and takes the place of the thinking spinner while a turn runs, with the same
 reactions as on the desktop. It links to the desktop pet when its `petDir`
 option points at this folder, and then shows whatever he is saying. Load it
-with `claude --plugin-dir <repo>\mod
-evbot`, or for every session (the
+with `claude --plugin-dir <repo>\mod\revbot`, or for every session (the
 desktop app's Code tab included) with `CLAUDE_CODE_PLUGIN_DIRS` in
 `~/.claude/settings.json`. `/revbot` inside a session lists what it can do.
 Details and options: [mod/revbot/README.md](mod/revbot/README.md). His
-terminal frames come from `python toolsuild_cells.py` (rerun after the art
+terminal frames come from `python tools\build_cells.py` (rerun after the art
 changes).
 
 ### RevBot in the browser
@@ -171,6 +179,9 @@ revbot play wave            any clip; revbot state working holds a state; revbot
 revbot talk                 opens his chat box on the desktop
 revbot start                starts the desktop pet
 revbot follow on|off        follow you into the terminal; revbot back brings him out
+revbot quiet [MIN|off]      a quiet spell (an hour by default); revbot hush stops the line he is saying
+revbot chatter LEVEL        silent, events or chatty (see Quiet by contract)
+revbot hide / unhide        take him off the desk and bring him back
 Enable-RevBotPrompt         his face and state in front of your prompt (Disable-RevBotPrompt undoes it)
 ```
 
@@ -188,6 +199,28 @@ up long enough to read, then goes. Lines wait their turn. "Do something > Say
 hello" tries it; "Talking sounds" in the menu turns the tocks off. Anything on
 this PC can make him talk through the AI link: `revbot-hook --send "say Hello
 there!"`. The log records only that he spoke, never the words.
+
+### Quiet by contract
+
+He never talks on a timer, only about something that happened, and how much of
+that he says is yours to set (menu: Talking):
+
+| Level | He says |
+|---|---|
+| Silent | only answers to you: chat replies, lines you send him, the menu's hello |
+| When something needs you (default) | also "I need your OK" when a Claude Code session waits on a permission prompt, once per wait |
+| Chatty | also the opening of Claude's reply when a session finishes (the Stop hook's remark, at most 160 characters) |
+
+**Quiet for an hour** (menu, `quiet` over the pipe, `/revbot quiet` in the
+terminal, `revbot quiet` in PowerShell, the button on his page) makes him
+silent until it ends, and lasts across a restart; it ends without a word.
+**Hush** stops the line he is saying and drops anything waiting, and a hushed
+wait is not brought up again. **Hide** (Ctrl+Alt+Shift+R, the menu, `hide`)
+takes him off the desk, friends included, and he says nothing at all until you
+bring him back; his links keep running, so state.json and his other bodies
+stay true. All of it is in `state.json`, and the terminal band, the
+PowerShell prompt and his page show it ("quiet till 4:58", "hidden on your
+desk"). The desktop pet decides what is said; the other bodies only show it.
 
 ## Windows are terrain
 
@@ -209,7 +242,7 @@ which waits for climbing art; desktop icons are not platforms yet.
 
 Two pets are built in: RevBot and Damien (the red devil ball). Pick one from
 the "Pet" menu; the choice is saved. Damien's atlas is built from his sheet by
-`python toolsuild_codex_pet.py damien`.
+`python tools\build_codex_pet.py damien`.
 
 Landings squash RevBot down and spring him back, harder the further he fell,
 and shaking him makes him dizzy. Both are code-made (a squash/stretch and a

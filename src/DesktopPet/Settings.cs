@@ -30,6 +30,13 @@ sealed class Settings
     /// <summary>What that conversation was allowed to do; when the pet's chat mode changes, a new conversation starts.</summary>
     public string? ChatMode { get; set; }
 
+    /// <summary>How much he says on his own (Quiet.cs): "silent" (only answers you), "events" (also when something needs you), "chatty" (also remarks on what Claude did).</summary>
+    public string Chatter { get; set; } = Quiet.Events;
+    /// <summary>A quiet spell until then (wall clock, so it outlasts a restart), or null.</summary>
+    public DateTimeOffset? QuietUntil { get; set; }
+    /// <summary>The key that hides and shows him from anywhere, e.g. "Ctrl+Alt+Shift+R"; "" for none.</summary>
+    public string HideHotkey { get; set; } = Quiet.DefaultHotkey;
+
     /// <summary>"settings.json", or "settings.&lt;pet&gt;.json" for a friend pet.</summary>
     public static string FileName { get; set; } = "settings.json";
 
@@ -47,6 +54,10 @@ sealed class Settings
                 s.Size = Math.Clamp(s.Size, 0.5, 2.0);
                 if (!Atlas.IsBuiltIn(s.Pet))
                     s.Pet = "revbot";
+                s.Chatter = Quiet.Level(s.Chatter);
+                if (s.QuietUntil <= DateTimeOffset.Now)
+                    s.QuietUntil = null; // the spell ran out while he was off
+                s.HideHotkey ??= "";
                 return s;
             }
         }

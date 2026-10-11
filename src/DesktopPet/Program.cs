@@ -115,6 +115,7 @@ static class Program
                 Log.Info($"selftest ok: {name} look={atlas.HasLook} base={atlas.BaseScale} clips: {string.Join(' ', resolved)}");
                 Log.Info($"selftest physics ok: {name}: {PhysicsTest.Run(atlas)}");
             }
+            Log.Info($"selftest quiet contract: {Quiet.SelfTest()}");
             return 0;
         }
         catch (Exception ex)

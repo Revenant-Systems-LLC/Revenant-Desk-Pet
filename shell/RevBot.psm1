@@ -11,6 +11,10 @@
 #   revbot where           the state file, as is
 #   revbot start           starts the desktop pet if it is not running
 #   revbot follow on|off   follow you into the terminal (he walks to it and goes in); revbot back brings him out
+#   revbot quiet [MIN|off] quiet for an hour (or MIN minutes): only answers to you; "off" ends it
+#   revbot chatter LEVEL   how much he says unasked: silent, events (when something needs you), chatty
+#   revbot hush            stop what he is saying now
+#   revbot hide | unhide   take him off the desk and bring him back (his hotkey does the same)
 #   Enable-RevBotPrompt    a one-line RevBot in front of your prompt (Disable-RevBotPrompt undoes it)
 #
 # It reads state.json (what the pet writes next to its exe) and talks to the pet
@@ -141,6 +145,20 @@ function Get-RevBotDoing {
     return 'here with you'
 }
 
+function Get-RevBotQuietNote {
+    <# The quiet contract in a few words: hidden, quiet until when, or silent; '' when he talks as usual (or is an older pet). #>
+    param($State)
+    if (-not $State) { return '' }
+    $has = { param($n) [bool]$State.PSObject.Properties[$n] }
+    if ((& $has 'dismissed') -and $State.dismissed) { return 'hidden on your desk' }
+    if ((& $has 'quiet') -and $State.quiet -and (& $has 'quietUntil') -and $State.quietUntil) {
+        try { return 'quiet till ' + ([DateTimeOffset]::Parse($State.quietUntil, [Globalization.CultureInfo]::InvariantCulture)).LocalDateTime.ToString('H:mm') }
+        catch { return 'quiet for now' }
+    }
+    if ((& $has 'chatter') -and $State.chatter -eq 'silent') { return 'silent unless asked' }
+    return ''
+}
+
 function Show-RevBot {
     <# Him, in colour, with his state beside: his whole figure (12 or 16 rows), or -Head for just his head. #>
     param([int]$Rows = 12, [switch]$Head)
@@ -152,6 +170,8 @@ function Show-RevBot {
         "$($script:Esc)[1;38;2;255;153;0mRevBot$($script:Esc)[0m",
         (Get-RevBotDoing $s)
     )
+    $note = Get-RevBotQuietNote $s
+    if ($note) { $side += $note }
     if ($s -and $s.saying) { $side += "`"$($s.saying)`"" }
     if ($s -and $s.surfaces -and $s.surfaces.Count -gt 0) { $side += "also in: $($s.surfaces -join ', ')" }
     $pad = ($lines | ForEach-Object { ($_ -replace "$($script:Esc)\[[0-9;]*m", '').Length } | Measure-Object -Maximum).Maximum + 2
@@ -210,6 +230,8 @@ function Get-RevBotPromptLine {
     if (-not $s) { return "$e[2m[z_z] RevBot is away$e[0m" }
     $face = switch ($s.claude) { 'waiting' { '[o_o]' } 'working' { '[>_<]' } 'review' { '[o_O]' } default { if ($s.mode -eq 'Asleep') { '[-_-]' } else { '[^_^]' } } }
     $line = "$e[38;2;255;153;0m$face$e[0m $(Get-RevBotDoing $s)"
+    $note = Get-RevBotQuietNote $s
+    if ($note) { $line += " $e[2m($note)$e[0m" }
     if ($s.saying) { $line += "  $e[2m`"$($s.saying)`"$e[0m" }
     return $line
 }
@@ -232,7 +254,7 @@ function Disable-RevBotPrompt {
 }
 
 function Invoke-RevBot {
-    <# The one command: revbot [ask|chat|say|play|state|clear|talk|where|start|show|come] ... #>
+    <# The one command: revbot [ask|chat|say|play|state|clear|talk|where|start|show|come|quiet|chatter|hush|hide|unhide] ... #>
     param([Parameter(ValueFromRemainingArguments)][string[]]$Words)
     if (-not $Words -or $Words.Count -eq 0) { Show-RevBot; return }
     $verb = $Words[0].ToLowerInvariant()
@@ -248,10 +270,15 @@ function Invoke-RevBot {
         'come'  { Send-RevBot 'sendhome' }
         'follow' { Send-RevBot ('follow ' + ($rest -join ' ')) }
         'back'  { Send-RevBot 'comeback' }
+        'quiet' { Send-RevBot ('quiet ' + ($rest -join ' ')).Trim() }
+        'chatter' { if ($rest.Count -and $rest[0] -in 'silent', 'events', 'chatty') { Send-RevBot "chatter $($rest[0])" } else { Write-Host 'revbot chatter silent|events|chatty' } }
+        'hush'  { Send-RevBot 'hush' }
+        'hide'  { Send-RevBot 'hide' }
+        'unhide' { Send-RevBot 'show' }   # "revbot show" already draws him here
         'start' { Start-RevBot }
         'show'  { if ($rest.Count -and $rest[0] -eq 'head') { Show-RevBot -Head } else { Show-RevBot -Rows $(if ($rest.Count) { [int]$rest[0] } else { 12 }) } }
         'where' { $s = Get-RevBotState; if ($s) { $s | Format-List } else { 'not running' } }
-        default { Write-Host "revbot [ask TEXT | chat | say TEXT | play CLIP | state NAME | clear | talk | start | show [12|16|head] | where | follow on|off | back]" }
+        default { Write-Host "revbot [ask TEXT | chat | say TEXT | play CLIP | state NAME | clear | talk | start | show [12|16|head] | where | follow on|off | back | quiet [MIN|off] | chatter LEVEL | hush | hide | unhide]" }
     }
 }
 

@@ -1,6 +1,7 @@
 // claude plugin test mod/revbot
 import { expect, test } from 'claude-code/testing'
 
+import { quietCommand, quietNote, quietState } from './hooks/quiet'
 import { base64, clipFor, face, frameAt, isDone, packFrame, parseSheet, pick, sizeFor, spinnerShows } from './hooks/sprite'
 
 const TINY = JSON.stringify({
@@ -74,4 +75,31 @@ test('the command answers on its own and the state follows a tool call', async (
   expect(String(answer.text)).toContain('RevBot')
   const band = await $.command.run({ command: 'revbot', args: 'band off' })
   expect(String(band.text)).toContain('off')
+})
+
+test('quiet: the band notes a quiet spell, hiding or silence, and an older pet shows nothing', async () => {
+  const at = new Date(2026, 9, 10, 16, 5).toISOString()
+  expect(quietNote(quietState({ running: true, quiet: true, quietUntil: at }))).toBe('quiet till 16:05')
+  expect(quietNote(quietState({ running: true, dismissed: true, quiet: true, quietUntil: at }))).toBe('hidden on your desk')
+  expect(quietNote(quietState({ running: true, chatter: 'silent' }))).toBe('silent unless asked')
+  expect(quietNote(quietState({ running: true, chatter: 'events' }))).toBe(null)
+  expect(quietNote(quietState({ running: false, dismissed: true }))).toBe(null)
+  expect(quietNote(quietState({ running: true }))).toBe(null)
+})
+
+test('quiet: commands become pipe lines, nonsense does not', async () => {
+  expect(quietCommand(['quiet'])).toBe('quiet')
+  expect(quietCommand(['quiet', '30'])).toBe('quiet 30')
+  expect(quietCommand(['Quiet', 'OFF'])).toBe('quiet off')
+  expect(quietCommand(['quiet', 'soon'])).toBe(null)
+  expect(quietCommand(['chatter', 'chatty'])).toBe('chatter chatty')
+  expect(quietCommand(['chatter', 'loud'])).toBe(null)
+  expect(quietCommand(['hush'])).toBe('hush')
+  expect(quietCommand(['hide'])).toBe('hide')
+  expect(quietCommand(['band', 'off'])).toBe(null)
+})
+
+test('quiet: without a desktop pet the commands say so', async ($, on) => {
+  const answer = await $.command.run({ command: 'revbot', args: 'quiet 30' })
+  expect(String(answer.text)).toContain('No desktop pet')
 })

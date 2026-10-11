@@ -29,7 +29,10 @@ sealed class StateFile
         string Surfaces,     // every body that announced itself, comma separated
         int X,               // feet on screen, physical pixels
         int Y,
-        bool Hidden);        // off screen (fullscreen app in front, or gone into another body)
+        bool Hidden,         // off screen (fullscreen app in front, hidden by you, or gone into another body)
+        string Chatter,      // how much he says on his own: "silent", "events", "chatty" (Quiet.cs)
+        string? QuietUntil,  // a quiet spell runs until then (ISO time), or null; bodies say nothing unasked meanwhile
+        bool Dismissed);     // you hid him (hotkey or menu); he says nothing until you show him again
 
     const double MinWriteGap = 0.1;
 
@@ -107,6 +110,10 @@ sealed class StateFile
                 x = s.X,
                 y = s.Y,
                 hidden = s.Hidden,
+                chatter = s.Chatter,
+                quiet = s.QuietUntil is not null,
+                quietUntil = s.QuietUntil,
+                dismissed = s.Dismissed,
                 pid = Environment.ProcessId,
                 updated = DateTimeOffset.Now.ToString("yyyy-MM-dd'T'HH:mm:ss.fffzzz"),
             };

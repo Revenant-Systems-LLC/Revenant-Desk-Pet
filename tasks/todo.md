@@ -47,6 +47,23 @@ Dave saw the terminal mod live: two of him (spinner and band), both a smudge.
       when the band is off, else the one-line face. Never two of him.
 - [x] PowerShell module: picks sizes by crop and rows (`revbot show head`).
 - [x] `claude plugin validate`, `claude plugin test` (6 pass).
-- [ ] Deploy to dist (Dave's OK) and look at it live.
+- [x] Deployed to dist and committed (53681a6), on Dave's yes.
+- [ ] Dave looks at it in a live terminal.
 - [ ] The real fix: hand-drawn pixel-art RevBot at terminal size (Dave's art).
-- [ ] Quiet by contract (HANDOFF Next 1), design agreed with the advisor.
+
+## Quiet by contract (HANDOFF Next 1)
+- [x] `Quiet.cs`: speech kinds (answer, alert, remark), levels (silent,
+      events default, chatty), quiet spell parsing, hotkey parsing,
+      `WaitAlerts` (each wait mentioned once); checked by `--selftest`.
+- [x] Pet: Say() goes through the contract; hook `--speak` now sends
+      `remark`; verbs quiet/chatter/hush/hide/show; menu "Talking" and
+      "Hide"; Ctrl+Alt+Shift+R; hidden = links keep running, nothing said;
+      friends hide with him; state.json chatter/quiet/quietUntil/dismissed.
+- [x] Mod: band shows the quiet note; /revbot quiet|chatter|hush|hide|show
+      (9 tests pass). PowerShell: prompt note, revbot quiet|chatter|hush|
+      hide|unhide. Web page: quiet note, Quiet and Hush buttons.
+- [x] README (and three paths an earlier session's escaping had corrupted),
+      mod README, ROADMAP.
+- [x] Live test on the deployed pet (dist, backup dist-before-2026-10-10):
+      25 of 25 checks pass (art/build/live_quiet_test.ps1). Hotkey registered;
+      Dave presses it himself to confirm.

@@ -6,8 +6,9 @@ using System.Text.RegularExpressions;
 // revbot-hook: tells the running Revenant Desk Pet what Claude Code is doing.
 //
 //   revbot-hook                 run by a Claude Code hook: the event JSON arrives on stdin
-//   revbot-hook --speak         the same, for the Stop hook, and the pet also says the
-//                               opening of Claude's last reply in its speech bubble
+//   revbot-hook --speak         the same, for the Stop hook, and the pet may also say the
+//                               opening of Claude's last reply in its speech bubble (sent as
+//                               a "remark": unasked, so only when he is set to chatty)
 //   revbot-hook --send "LINE"   send a command yourself, e.g. "state working", "play wave", "clear"
 //
 // It forwards only the event name, the session id, the tool name and the
@@ -32,7 +33,7 @@ try
         string json = ReadStdin();
         Send(FromHook(json));
         if (args.Contains("--speak") && Snippet(LastReply(json)) is string say)
-            Send("say " + say);
+            Send("remark " + say);
     }
 }
 catch

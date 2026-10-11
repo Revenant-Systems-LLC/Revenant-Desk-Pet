@@ -11,6 +11,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type { Shown } from '../types'
+import { quietCommand, quietNote, quietState } from './quiet'
 import { clipFor, face, frameAt, isDone, packFrame, parseSheet, pick, spinnerShows } from './sprite'
 import type { Sheet, Size } from './sprite'
 
@@ -23,11 +24,11 @@ const HEARTBEAT_MS = 15 * 1000 // the pet stands a terminal body down after 45 s
 const SAYING_POLL_MS = 1500
 
 // What the drawings read. A change here redraws the band and the spinner.
-const shown = atom({ plugin: 'revbot', key: 'shown' } as const, { clip: 'idle', state: null, saying: null, where: null } as Shown)
+const shown = atom({ plugin: 'revbot', key: 'shown' } as const, { clip: 'idle', state: null, saying: null, where: null, note: null } as Shown)
 const bandSize = atom({ plugin: 'revbot', key: 'bandSize' } as const, 'small')
 const spinnerStyle = atom({ plugin: 'revbot', key: 'spinnerStyle' } as const, 'auto') // 'auto': never two of him at once
 
-type Desk = { running: boolean; saying: string | null; claude: string; where: string }
+type Desk = { running: boolean; saying: string | null; claude: string; where: string; note: string | null; dismissed: boolean }
 
 // The pet's moment, module-wide (a hot reload starts him over, which is fine).
 const S = {
@@ -46,6 +47,7 @@ const S = {
   sessionId: '',
   desktopSaying: null as string | null,
   deskWhere: null as string | null,  // where the desktop pet says he is ('desktop', 'terminal:<id>'), null when not running
+  deskNote: null as string | null,   // the quiet contract: 'quiet till 4:58', 'hidden on your desk', ...
   pseudo: 12345,
   // where the sprites are mounted, so the frame timer can repaint them in place
   bandId: null as string | null,
@@ -80,7 +82,8 @@ async function show($: EngineInterface, clip: string): Promise<void> {
   const state = S.hold
   const saying = S.desktopSaying
   const where = S.deskWhere
-  await update($, shown, s => (s.clip === clip && s.state === state && s.saying === saying && s.where === where ? s : { clip, state, saying, where }))
+  const note = S.deskNote
+  await update($, shown, s => (s.clip === clip && s.state === state && s.saying === saying && s.where === where && s.note === note ? s : { clip, state, saying, where, note }))
 }
 
 async function playOnce($: EngineInterface, clip: string): Promise<void> {
@@ -119,6 +122,8 @@ async function readDesk($: EngineInterface): Promise<Desk | null> {
       saying: typeof raw['saying'] === 'string' ? (raw['saying'] as string) : null,
       claude: typeof raw['claude'] === 'string' ? (raw['claude'] as string) : 'idle',
       where: typeof raw['where'] === 'string' ? (raw['where'] as string) : 'desktop',
+      note: quietNote(quietState(raw)),
+      dismissed: raw['dismissed'] === true,
     }
   } catch {
     return null
@@ -128,11 +133,13 @@ async function readDesk($: EngineInterface): Promise<Desk | null> {
 async function pollDesk($: EngineInterface): Promise<void> {
   const desk = await readDesk($)
   const saying = desk?.running ? desk.saying : null
-  const where = desk?.running ? desk.where : null
-  if (saying !== S.desktopSaying || where !== S.deskWhere) {
+  const note = desk?.running ? desk.note : null
+  const where = desk?.running && !desk.dismissed ? desk.where : null // hidden: he is not 'also on your desk'
+  if (saying !== S.desktopSaying || where !== S.deskWhere || note !== S.deskNote) {
     S.desktopSaying = saying
     S.deskWhere = where
-    await update($, shown, s => ({ ...s, saying, where }))
+    S.deskNote = note
+    await update($, shown, s => ({ ...s, saying, where, note }))
   }
 }
 
@@ -214,7 +221,7 @@ export const register: Register = (on, options) => {
     await $.command.register({
       name: 'revbot',
       description: 'RevBot in your terminal: band size, spinner style, say something, where he is',
-      argumentHint: '[band off|small|large] [spinner auto|sprite|face|off] [say TEXT] [desk]',
+      argumentHint: '[band off|small|large] [spinner auto|sprite|face|off] [say TEXT] [quiet [MIN|off]] [chatter silent|events|chatty] [hush|hide|show] [desk]',
     })
 
     if (e.isInteractive && e.surface === 'terminal') {
@@ -302,10 +309,17 @@ export const register: Register = (on, options) => {
       await tellDesk($, `say ${words.slice(1).join(' ')}`)
       return { text: 'Sent to the desktop pet.' }
     }
+    const line = quietCommand(words)
+    if (line) {
+      if (!S.hookExe) return { text: 'No desktop pet is configured (set petDir in /config).' }
+      await tellDesk($, line)
+      await pollDesk($)
+      return { text: `Sent to the desktop pet: ${line}.` }
+    }
     if (verb === 'desk') {
       const desk = await readDesk($)
       if (!desk) return { text: S.hookExe ? 'The desktop pet has no state file yet (is it running?).' : 'No desktop pet is configured (set petDir in /config).' }
-      return { text: desk.running ? `Desktop pet: ${desk.where}, Claude ${desk.claude}${desk.saying ? `, saying "${desk.saying}"` : ''}.` : 'The desktop pet is not running.' }
+      return { text: desk.running ? `Desktop pet: ${desk.where}, Claude ${desk.claude}${desk.note ? `, ${desk.note}` : ''}${desk.saying ? `, saying "${desk.saying}"` : ''}.` : 'The desktop pet is not running.' }
     }
     const band = await read($, bandSize)
     const spin = await read($, spinnerStyle)
@@ -314,6 +328,7 @@ export const register: Register = (on, options) => {
         `RevBot: ${currentClip()}${S.hold ? ` (Claude ${S.hold})` : ''}. Band ${band}, spinner ${spin}${S.hookExe ? ', desktop pet linked' : ''}.`,
         '/revbot band off|small|large    /revbot spinner auto|sprite|face|off',
         '/revbot say TEXT (the desktop pet says it)    /revbot desk (where he is)',
+        '/revbot quiet [MINUTES|off]    /revbot chatter silent|events|chatty    /revbot hush|hide|show',
       ].join('\n'),
     }
   })
@@ -336,7 +351,7 @@ export const register: Register = (on, options) => {
         <Raster key="pet" columns={size.columns} rows={size.rows} cells={cells} />
         <Box flexDirection="column" justifyContent="flex-end">
           <Text bold color="claude">RevBot</Text>
-          <Text dimColor>{doingWords(s.state)}{whereWords(s.where) ? `, ${whereWords(s.where)}` : ''}</Text>
+          <Text dimColor>{doingWords(s.state)}{whereWords(s.where) ? `, ${whereWords(s.where)}` : ''}{s.note ? `, ${s.note}` : ''}</Text>
           {s.saying ? <Text wrap="wrap">"{s.saying}"</Text> : null}
         </Box>
       </Box>

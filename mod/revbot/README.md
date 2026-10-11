@@ -49,6 +49,9 @@ folder in `~/.claude/settings.json`:
 | `/revbot band off`, `small`, `large` | the band above the prompt: none, his whole figure 12 rows tall, 16 rows tall |
 | `/revbot spinner auto`, `sprite`, `face`, `off` | the thinking spinner. `auto` (the default) shows his head there only when the band is off, and a one-line face otherwise, so there is never two of him; `sprite` always his head; `face` always the one-line face; `off` Claude Code's own |
 | `/revbot say TEXT` | the desktop pet says it in his bubble |
+| `/revbot quiet`, `quiet 30`, `quiet off` | a quiet spell on the desktop pet (an hour, or minutes): he says nothing you did not ask for until it ends; the band shows "quiet till 4:58" |
+| `/revbot chatter silent`, `events`, `chatty` | how much he says unasked: only answers, also when something needs you (default), also Claude's replies |
+| `/revbot hush`, `hide`, `show` | stop his current line; take him off the desk and bring him back |
 | `/revbot desk` | what the desktop pet is doing |
 
 The band folds away with its `[-]` like any band.

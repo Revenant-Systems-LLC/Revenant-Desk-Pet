@@ -137,6 +137,9 @@ sealed class WebBody : IDisposable
                     "/play" when body.Length > 0 => "play " + Word(body),
                     "/hold" when body.Length > 0 => "state " + Word(body),
                     "/clear" => "clear",
+                    "/quiet" => "quiet " + Word(body),      // "" (an hour), "30", "off"
+                    "/chatter" when body.Length > 0 => "chatter " + Word(body),
+                    "/hush" => "hush",
                     _ => null,
                 };
                 if (line is null)
