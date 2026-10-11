@@ -573,7 +573,7 @@ sealed class PetContext : ApplicationContext
     void AskForOk(string session)
     {
         if (waitAlerts.ShouldAlert(session, clock.Elapsed.TotalSeconds))
-            Say("Hey Dave, I need your OK on something.", Speech.Alert);
+            Say("Hey, I need your OK on something.", Speech.Alert);
     }
 
     /// <summary>Hush: stop the line he is saying and drop what was waiting to be said.</summary>

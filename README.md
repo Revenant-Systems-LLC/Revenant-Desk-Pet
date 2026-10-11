@@ -66,7 +66,7 @@ characters, markdown stripped) as a `remark`, which the pet says in its speech
 bubble only when set to chatty (see "Quiet by contract" below). It reads that
 reply from the transcript Claude Code points the hook to, sends it only over
 the local pipe, and writes it nowhere. When a Claude Code session waits on a
-permission prompt he says "Hey Dave, I need your OK on something." once for
+permission prompt he says "Hey, I need your OK on something." once for
 that wait, never again while it lasts (and one line for several sessions that
 start waiting within 45 s of each other).
 
