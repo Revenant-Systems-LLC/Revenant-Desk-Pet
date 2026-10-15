@@ -47,7 +47,9 @@ VIDEOS = {
     "v3-sit":       dict(file="revbot_sitting.mp4", ref=0),                     # green block keyed out too
     "v3-360":       dict(file="gemini_generated_video_67967726.mp4", ref=0),    # legs stretch after frame ~30
     "v3-look":      dict(file="revbot_lookaround.mp4", ref=0),                  # cut with --key --fix-eyes --v3 (its "up" frames roll the eyes white)
-    "v3-climb2":     dict(file="revbot_climbing2.mp4", ref=232),                 # the camera zooms in by frame 24, then only rises with him: one scale from 24 on
+    "v3-climb2":    dict(file="revbot_climbing2.mp4", ref=232),                 # the camera zooms in by frame 24, then only rises with him: one scale from 24 on
+    "v3-looksheet": dict(file="art/source/revbot-v3/look-sheet-16.png", ref=0),  # an image (Dave, 2026-09-30), cut with tools/sheet_cells.py 8 2
+    "v3-think2":    dict(file="revbot_thinking2.mp4", ref=0),
 }
 
 
@@ -81,7 +83,9 @@ CLIPS = {
     "happy":        ("v3-celebrate", span(186, 216), 12, False),
     "walk_right":   ("v3-walk", "loop:100:190:20:60", 12, True, "flip"),
     "wave":         ("v3-wts", span(18, 60), 12, False),
-    "think":        ("v3-wts", span(66, 146, 3), 8, False),
+    # thinking hard (the floating math is drawn on top in code): scratches and taps his head,
+    # then tilts it round and back to the front; his eyes shut at 16-19, 122-128 and 146-150
+    "think":        ("v3-think2", without(span(30, 118, 3) + span(132, 192, 3), (122, 128), (146, 150)), 8, False),
     "shrug":        ("v3-wts", span(146, 190), 12, False),
     "waiting":      ("v3-wait", pingpong(span(36, 80)), 12, True),
     "failed":       ("v3-wait", span(118, 216, 3), 8, False),
@@ -108,13 +112,17 @@ CLIPS = {
     "sit":          ("v3-sit", span(36, 150, 3) + span(207, 237, 3), 8, False),   # skips 198-206, angry glare
 }
 
-# look: Atlas.LookDirections (16) poses, clockwise from straight up, from the look-around
-# video (his head circles, his body stays still). Its left-hand side holds distinct poses
-# (tipped forward, level, tilted back); its right-hand side rolls his eyes white going up,
-# so the right is the left mirrored. (direction degrees: (frame, mirrored))
-LOOK_VIDEO = "v3-look"
-_LEFT = {180: 141, 202.5: 152, 225: 159, 247.5: 168, 270: 183, 292.5: 201, 315: 207, 337.5: 216}
-LOOK = {0: (36, False), **{360 - a: (f, True) for a, f in _LEFT.items() if a != 180}, **{a: (f, False) for a, f in _LEFT.items()}}
+# look: Atlas.LookDirections (16) poses, clockwise from straight up, from Dave's 16-pose
+# sheet (art/source/revbot-v3/look-sheet-16.png, cells numbered 0-15). Its left side has
+# the full set (tipped forward, level, tilted back); its right side has no tilted-back
+# poses and turns his whole body at cells 3 and 4, so up-right and right are the left
+# poses mirrored. Every direction a different pose. (direction degrees: (cell, mirrored))
+LOOK_VIDEO = "v3-looksheet"
+LOOK = {
+    0: (15, False), 22.5: (14, True), 45: (13, True), 67.5: (2, False), 90: (12, True), 112.5: (5, False),
+    135: (6, False), 157.5: (7, False), 180: (8, False), 202.5: (9, False), 225: (10, False), 247.5: (11, False),
+    270: (12, False), 292.5: (13, False), 315: (14, False), 337.5: (1, True),
+}
 LOOK_DIRECTIONS = 16
 
 

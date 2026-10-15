@@ -1,0 +1,17 @@
+{
+  "name": "revbot",
+  "version": "0.1.0",
+  "description": "RevBot, the Revenant desk pet, in your Claude Code terminal: animated above the prompt and as the thinking spinner, reacting to what Claude is doing",
+  "author": {
+    "name": "Revenant Systems LLC"
+  },
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "petDir": {
+      "type": "string",
+      "description": "Folder of the desktop pet (holds DesktopPet.exe, hook/revbot-hook.exe and state.json). Leave empty if the desktop pet is not installed.",
+      "default": "",
+      "title": "Desktop pet folder"
+    }
+  }
+}

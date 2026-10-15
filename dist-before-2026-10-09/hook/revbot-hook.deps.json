@@ -1,0 +1,23 @@
+{
+  "runtimeTarget": {
+    "name": ".NETCoreApp,Version=v10.0",
+    "signature": ""
+  },
+  "compilationOptions": {},
+  "targets": {
+    ".NETCoreApp,Version=v10.0": {
+      "revbot-hook/0.1.0": {
+        "runtime": {
+          "revbot-hook.dll": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "revbot-hook/0.1.0": {
+      "type": "project",
+      "serviceable": false,
+      "sha512": ""
+    }
+  }
+}
